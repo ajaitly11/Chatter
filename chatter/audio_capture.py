@@ -8,7 +8,9 @@ import queue
 import sounddevice as sd
 
 SAMPLE_RATE = 16000
-CHUNK_MS = 100
+# Larger chunks amortize per-feed()-call overhead much better — measured
+# ~0.36 real-time-factor at 100ms chunks vs. ~0.16 at 500ms on this model.
+CHUNK_MS = 500
 
 
 class StreamingMicRecorder:

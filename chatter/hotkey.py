@@ -1,8 +1,12 @@
 """Global push-to-talk: hold Right Option to record. Audio is fed to a
 streaming-capable model live (as you speak, not after you release) via
-transcribe.cpp's Stream API, so the post-release wait is just the last
-fraction of a second of audio, not the whole utterance. Release to finalize,
-optionally clean up with the local formatter, and paste at the cursor.
+transcribe.cpp's Stream API. Per-chunk cost grows with how much audio a
+stream has accumulated, so long holds periodically finalize and reopen a
+fresh stream (a new "segment") to keep processing bounded — segment texts
+are joined together for the final result. Release finalizes the last
+segment, optionally cleans up with the local formatter, and pastes at the
+cursor. The feeder thread is always drained in full before finalizing —
+never abandoned on a timeout — so no audio is silently dropped.
 """
 
 import logging
@@ -14,10 +18,12 @@ from pynput import keyboard
 
 from . import config
 from . import paste_action
-from .audio_capture import StreamingMicRecorder
+from .audio_capture import SAMPLE_RATE, StreamingMicRecorder
 from .transcription_service import streaming_service
 
 logger = logging.getLogger("chatter.hotkey")
+
+SEGMENT_SAMPLES = SAMPLE_RATE * 10  # reopen the stream every ~10s of audio
 
 
 class PushToTalkController(QObject):
@@ -33,7 +39,12 @@ class PushToTalkController(QObject):
         self._recorder = StreamingMicRecorder()
         self._recording = False
         self._listener = None
-        self._stream = None
+
+        self._model_path = None
+        self._backend = None
+        self._current_stream = None
+        self._segment_samples = 0
+        self._segments: list[str] = []
         self._feeder_thread = None
 
     def start(self):
@@ -62,15 +73,19 @@ class PushToTalkController(QObject):
             )
             return
 
+        cfg = config.load()
         try:
-            cfg = config.load()
-            self._stream = streaming_service.open_stream(model_path, cfg["backend"])
+            self._model_path = model_path
+            self._backend = cfg["backend"]
+            self._current_stream = streaming_service.open_stream(model_path, self._backend)
         except Exception:
             logger.exception("failed to open stream")
             self.error.emit("Couldn't start the streaming model — see chatter.log.")
-            self._stream = None
+            self._current_stream = None
             return
 
+        self._segments = []
+        self._segment_samples = 0
         self._recording = True
         self._recorder.start()
         logger.info("recording started (streaming)")
@@ -78,17 +93,49 @@ class PushToTalkController(QObject):
         self._feeder_thread = threading.Thread(target=self._feed_loop, daemon=True)
         self._feeder_thread.start()
 
+    def _live_preview(self, current_text: str) -> str:
+        return " ".join(s for s in (*self._segments, current_text) if s).strip()
+
     def _feed_loop(self):
         try:
             for chunk in self._recorder.chunks():
-                update = self._stream.feed(chunk)
+                update = self._current_stream.feed(chunk)
+                self._segment_samples += len(chunk)
+
                 if update.result_changed:
-                    text = self._stream.text()
-                    live = (text.committed + text.tentative).strip()
+                    current = self._current_stream.text().full.strip()
+                    live = self._live_preview(current)
                     if live:
                         self.live_text_changed.emit(live)
+
+                if self._segment_samples >= SEGMENT_SAMPLES:
+                    self._roll_over_segment()
         except Exception:
             logger.exception("stream feed loop failed")
+
+    def _roll_over_segment(self):
+        """Finalizes the current stream and opens a fresh one, so a long
+        hold doesn't keep growing one stream's context indefinitely."""
+        text = self._finalize_current_stream()
+        if text:
+            self._segments.append(text)
+        logger.info("segment rolled over: %r (%d total)", text, len(self._segments))
+        self._current_stream = streaming_service.open_stream(self._model_path, self._backend)
+        self._segment_samples = 0
+
+    def _finalize_current_stream(self) -> str:
+        stream = self._current_stream
+        stream.finalize()
+        # `full` is the raw model hypothesis and, empirically, the reliable
+        # one here — after finalize() `tentative` gets wiped to empty while
+        # `committed` can be left stuck on stale text, so `committed +
+        # tentative` silently drops real content that only survives in `full`.
+        text = stream.text().full.strip()
+        try:
+            stream.reset()
+        except Exception:
+            pass
+        return text
 
     def _on_release(self, key):
         if key != keyboard.Key.alt_r or not self._recording:
@@ -100,14 +147,17 @@ class PushToTalkController(QObject):
         threading.Thread(target=self._finish, daemon=True).start()
 
     def _finish(self):
-        stream = self._stream
         try:
             if self._feeder_thread is not None:
-                self._feeder_thread.join(timeout=5)
+                # No timeout: a truncated wait here means silently dropped
+                # audio. Segmenting during _feed_loop keeps this bounded to
+                # roughly one segment's worth of processing time.
+                self._feeder_thread.join()
 
-            stream.finalize()
-            result = stream.text()
-            text = (result.committed + result.tentative).strip() or result.full.strip()
+            final_segment = self._finalize_current_stream()
+            if final_segment:
+                self._segments.append(final_segment)
+            text = " ".join(self._segments).strip()
             logger.info("finalized: %r", text)
 
             if not text:
@@ -127,10 +177,7 @@ class PushToTalkController(QObject):
             logger.exception("push-to-talk pipeline failed")
             self.error.emit(traceback.format_exc())
         finally:
-            try:
-                stream.reset()
-            except Exception:
-                pass
-            self._stream = None
+            self._current_stream = None
             self._feeder_thread = None
+            self._segments = []
             self.status_changed.emit("Idle")

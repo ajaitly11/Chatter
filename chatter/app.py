@@ -46,6 +46,13 @@ def _truncate(text: str, n: int = 46) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+def _truncate_head(text: str, n: int = 80) -> str:
+    """Keeps the *tail* of the text — for live captions, the most recent
+    words are the relevant ones, not the start of a long utterance."""
+    text = text.replace("\n", " ").strip()
+    return text if len(text) <= n else "…" + text[-(n - 1):]
+
+
 def run():
     configure_logging()
     logger.info("Chatter starting")
@@ -71,7 +78,7 @@ def run():
 
     hotkey = PushToTalkController(get_streaming_model_path, formatter)
     hotkey.status_changed.connect(window._on_hotkey_status)
-    hotkey.live_text_changed.connect(lambda text: overlay.update_live_text(_truncate(text, 60)))
+    hotkey.live_text_changed.connect(lambda text: overlay.update_live_text(_truncate_head(text, 80)))
 
     _WORKING_STATES = {"Transcribing…", "Cleaning up…"}
 

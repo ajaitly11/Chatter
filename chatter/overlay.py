@@ -1,14 +1,16 @@
-"""A small pill that slides up from the bottom of the screen while
-push-to-talk is active — visual confirmation the hotkey was heard, mirrors
-what Wispr Flow shows. Never steals focus from whatever you're typing into.
+"""A small pill that slides in from the bottom-right corner of the screen
+while push-to-talk is active — visual confirmation the hotkey was heard and
+a live look at what's being transcribed. Never steals focus from whatever
+you're typing into.
 """
 
 from PyQt6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer
 from PyQt6.QtGui import QColor, QPainter
 from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QWidget
 
-WIDTH = 280
-HEIGHT = 48
+WIDTH = 340
+HEIGHT = 52
+RIGHT_MARGIN = 24
 BOTTOM_MARGIN = 28
 
 STATE_COLORS = {
@@ -55,6 +57,7 @@ class Overlay(QWidget):
         self._dot = _Dot()
         layout.addWidget(self._dot)
         self._label = QLabel("Listening…")
+        self._label.setWordWrap(False)
         self._label.setStyleSheet("color: white; font-size: 13px; font-weight: 500;")
         layout.addWidget(self._label, stretch=1)
 
@@ -63,7 +66,7 @@ class Overlay(QWidget):
         self._hide_timer.timeout.connect(self._slide_out)
 
         self._animation = QPropertyAnimation(self, b"pos")
-        self._animation.setDuration(220)
+        self._animation.setDuration(260)
         self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._hiding = False
 
@@ -74,12 +77,15 @@ class Overlay(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.drawRoundedRect(self.rect(), HEIGHT / 2, HEIGHT / 2)
 
-    def _target_x_and_ys(self):
+    def _positions(self):
         screen = QApplication.primaryScreen().geometry()
-        x = screen.x() + (screen.width() - WIDTH) // 2
+        resting_x = screen.x() + screen.width() - WIDTH - RIGHT_MARGIN
         resting_y = screen.y() + screen.height() - HEIGHT - BOTTOM_MARGIN
+        # Off-screen toward the bottom-right corner, so the entrance reads as
+        # sliding in from the bottom-right rather than straight up.
+        hidden_x = screen.x() + screen.width() + WIDTH
         hidden_y = screen.y() + screen.height() + HEIGHT
-        return x, resting_y, hidden_y
+        return (resting_x, resting_y), (hidden_x, hidden_y)
 
     def _animate_to(self, x: int, y: int):
         self._animation.stop()
@@ -93,11 +99,11 @@ class Overlay(QWidget):
         self._label.setText(text)
         self._hide_timer.stop()
 
-        x, resting_y, hidden_y = self._target_x_and_ys()
+        (rx, ry), (hx, hy) = self._positions()
         if not self.isVisible():
-            self.move(x, hidden_y)
+            self.move(hx, hy)
             self.show()
-        self._animate_to(x, resting_y)
+        self._animate_to(rx, ry)
 
     def update_live_text(self, text: str):
         """Updates the label in place while listening, without touching the
@@ -113,8 +119,8 @@ class Overlay(QWidget):
         if self._hiding:
             return
         self._hiding = True
-        x, _resting_y, hidden_y = self._target_x_and_ys()
-        self._animate_to(x, hidden_y)
+        (_rx, _ry), (hx, hy) = self._positions()
+        self._animate_to(hx, hy)
         QTimer.singleShot(self._animation.duration() + 20, self._finish_hide)
 
     def _finish_hide(self):
