@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+models/*.gguf
+!models/.gitkeep
+
+Chatter.app/
+packaging/icon.icns
+packaging/icon.iconset/
+
+*.log
