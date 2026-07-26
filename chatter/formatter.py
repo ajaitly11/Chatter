@@ -11,12 +11,16 @@ import urllib.request
 import json
 
 from . import config
+from . import dictionary
 
 SYSTEM_PROMPT = (
     "You clean up raw speech-to-text transcripts. Fix punctuation, capitalization, "
-    "and remove filler words (um, uh, like, you know) and false starts. Keep the "
-    "speaker's wording and meaning otherwise unchanged. Output only the cleaned "
-    "text, nothing else — no preamble, no quotes, no commentary."
+    "and remove filler words (um, uh, like, you know) and false starts. The "
+    "transcript may be stitched together from multiple segments and contain a "
+    "short run of duplicated or repeated words right where two segments meet — "
+    "collapse those into a single occurrence. Keep the speaker's wording and "
+    "meaning otherwise unchanged. Output only the cleaned text, nothing else — "
+    "no preamble, no quotes, no commentary."
 )
 
 
@@ -71,7 +75,7 @@ class Formatter:
 
             payload = json.dumps({
                 "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "system", "content": SYSTEM_PROMPT + dictionary.prompt_hint()},
                     {"role": "user", "content": raw_text},
                 ],
                 "temperature": 0.2,

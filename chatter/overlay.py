@@ -5,7 +5,7 @@ you're typing into.
 """
 
 from PyQt6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer
-from PyQt6.QtGui import QColor, QPainter
+from PyQt6.QtGui import QColor, QCursor, QPainter
 from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QWidget
 
 WIDTH = 340
@@ -69,6 +69,7 @@ class Overlay(QWidget):
         self._animation.setDuration(260)
         self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
         self._hiding = False
+        self._screen_geometry = None
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -78,7 +79,14 @@ class Overlay(QWidget):
         painter.drawRoundedRect(self.rect(), HEIGHT / 2, HEIGHT / 2)
 
     def _positions(self):
-        screen = QApplication.primaryScreen().geometry()
+        # Pin to whichever screen the cursor was on when we started showing —
+        # recomputed only on a fresh appearance, so we don't jump screens
+        # mid-animation if the cursor moves while the pill is up. With
+        # multiple monitors, primaryScreen() may not be the one in use.
+        if self._screen_geometry is None:
+            screen_obj = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+            self._screen_geometry = screen_obj.geometry()
+        screen = self._screen_geometry
         resting_x = screen.x() + screen.width() - WIDTH - RIGHT_MARGIN
         resting_y = screen.y() + screen.height() - HEIGHT - BOTTOM_MARGIN
         # Off-screen toward the bottom-right corner, so the entrance reads as
@@ -127,3 +135,4 @@ class Overlay(QWidget):
         if self._hiding:
             self.hide()
             self._hiding = False
+            self._screen_geometry = None

@@ -60,7 +60,7 @@ QPushButton#primary:disabled {
     color: #7d879e;
 }
 
-QComboBox, QTextEdit {
+QComboBox, QTextEdit, QLineEdit, QTableWidget {
     background-color: #2a2b2e;
     border: 1px solid #3d3e43;
     border-radius: 8px;
@@ -75,6 +75,24 @@ QTextEdit {
 QComboBox::drop-down {
     border: none;
     width: 24px;
+}
+
+QTableWidget {
+    padding: 2px;
+    gridline-color: #3d3e43;
+}
+
+QTableWidget::item {
+    padding: 4px 6px;
+}
+
+QHeaderView::section {
+    background-color: #2a2b2e;
+    color: #9a9ba1;
+    border: none;
+    border-bottom: 1px solid #3d3e43;
+    padding: 4px 6px;
+    font-size: 11px;
 }
 
 QProgressBar {

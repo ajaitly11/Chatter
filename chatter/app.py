@@ -80,7 +80,7 @@ def run():
     hotkey.status_changed.connect(window._on_hotkey_status)
     hotkey.live_text_changed.connect(lambda text: overlay.update_live_text(_truncate_head(text, 80)))
 
-    _WORKING_STATES = {"Transcribing…", "Cleaning up…"}
+    _WORKING_STATES = {"Transcribing…", "Cleaning up…", "Still finishing up…"}
 
     def on_status(status: str):
         if status == "Listening…":

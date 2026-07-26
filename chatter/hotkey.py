@@ -10,6 +10,7 @@ never abandoned on a timeout — so no audio is silently dropped.
 """
 
 import logging
+import re
 import threading
 import traceback
 
@@ -17,6 +18,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from pynput import keyboard
 
 from . import config
+from . import dictionary
 from . import paste_action
 from .audio_capture import SAMPLE_RATE, StreamingMicRecorder
 from .transcription_service import streaming_service
@@ -24,6 +26,31 @@ from .transcription_service import streaming_service
 logger = logging.getLogger("chatter.hotkey")
 
 SEGMENT_SAMPLES = SAMPLE_RATE * 10  # reopen the stream every ~10s of audio
+_WORD_RE = re.compile(r"[a-z0-9']+")
+
+
+def _join_segments(segments: list[str], max_overlap_words: int = 8) -> str:
+    """Joins segment texts, trimming an exact duplicated run of words where
+    one segment repeats the tail of the previous one — a byproduct of
+    finalizing/reopening the stream mid-utterance. Only catches exact
+    (case/punctuation-insensitive) repeats; anything fuzzier is left for the
+    AI cleanup pass, which can catch it semantically.
+    """
+    if not segments:
+        return ""
+    joined = segments[0].strip()
+    for seg in segments[1:]:
+        prev_words = _WORD_RE.findall(joined.lower())
+        seg_words_raw = seg.split()
+        seg_words_norm = _WORD_RE.findall(seg.lower())
+        limit = min(max_overlap_words, len(prev_words), len(seg_words_norm))
+        trimmed = seg
+        for k in range(limit, 0, -1):
+            if prev_words[-k:] == seg_words_norm[:k]:
+                trimmed = " ".join(seg_words_raw[k:])
+                break
+        joined = f"{joined.strip()} {trimmed.strip()}".strip()
+    return joined
 
 
 class PushToTalkController(QObject):
@@ -38,6 +65,13 @@ class PushToTalkController(QObject):
         self._formatter = formatter
         self._recorder = StreamingMicRecorder()
         self._recording = False
+        # True from the moment a hold is released until _finish() (which
+        # touches self._segments / self._current_stream, possibly for
+        # several seconds during AI formatting) is fully done. Without this,
+        # a quick re-press mid-formatting could reset that shared state out
+        # from under the still-running _finish() call — surfaced as AI
+        # cleanup only ever returning the most recent short utterance.
+        self._processing = False
         self._listener = None
 
         self._model_path = None
@@ -63,6 +97,10 @@ class PushToTalkController(QObject):
 
     def _on_press(self, key):
         if key != keyboard.Key.alt_r or self._recording:
+            return
+        if self._processing:
+            logger.info("press ignored — still finishing the previous utterance")
+            self.status_changed.emit("Still finishing up…")
             return
 
         model_path = self._get_streaming_model_path()
@@ -94,7 +132,7 @@ class PushToTalkController(QObject):
         self._feeder_thread.start()
 
     def _live_preview(self, current_text: str) -> str:
-        return " ".join(s for s in (*self._segments, current_text) if s).strip()
+        return _join_segments([*self._segments, current_text])
 
     def _feed_loop(self):
         try:
@@ -141,6 +179,7 @@ class PushToTalkController(QObject):
         if key != keyboard.Key.alt_r or not self._recording:
             return
         self._recording = False
+        self._processing = True
         self._recorder.stop()  # queues a sentinel; feed loop drains and exits
         logger.info("recording stopped")
         self.status_changed.emit("Transcribing…")
@@ -157,13 +196,14 @@ class PushToTalkController(QObject):
             final_segment = self._finalize_current_stream()
             if final_segment:
                 self._segments.append(final_segment)
-            text = " ".join(self._segments).strip()
+            text = _join_segments(self._segments)
             logger.info("finalized: %r", text)
 
             if not text:
                 self.error.emit("No speech detected.")
                 return
 
+            text = dictionary.apply_corrections(text)
             cfg = config.load()
             if cfg["formatting_enabled"]:
                 self.status_changed.emit("Cleaning up…")
@@ -180,4 +220,5 @@ class PushToTalkController(QObject):
             self._current_stream = None
             self._feeder_thread = None
             self._segments = []
+            self._processing = False
             self.status_changed.emit("Idle")

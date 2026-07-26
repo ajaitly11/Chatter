@@ -8,17 +8,22 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from . import config
+from . import dictionary
 from .transcription_service import (
     decode_to_pcm,
     list_models,
@@ -49,7 +54,7 @@ class TranscribeWorker(QThread):
 
             self.progress.emit("Transcribing…")
             result = service.transcribe(pcm, self.model_path, self.backend)
-            text = result.text
+            text = dictionary.apply_corrections(result.text)
             segments = getattr(result, "segments", None)
 
             if self.format_enabled and text.strip():
@@ -77,7 +82,7 @@ class MainWindow(QMainWindow):
     def __init__(self, formatter):
         super().__init__()
         self.setWindowTitle("Chatter")
-        self.resize(820, 640)
+        self.resize(820, 740)
         self.setAcceptDrops(True)
 
         self.formatter = formatter
@@ -92,6 +97,7 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self._build_file_card())
         layout.addWidget(self._build_config_card())
+        layout.addWidget(self._build_dictionary_card())
         layout.addWidget(self._build_output_card(), stretch=1)
         layout.addLayout(self._build_export_row())
 
@@ -176,6 +182,73 @@ class MainWindow(QMainWindow):
         self.status_label.setStyleSheet("color: #9a9ba1;")
         v.addWidget(self.status_label)
         return card
+
+    def _build_dictionary_card(self) -> QFrame:
+        card = _card()
+        v = QVBoxLayout(card)
+        v.addWidget(_section_title("Custom Dictionary"))
+
+        hint = QLabel('Teach Chatter words it keeps mishearing — e.g. "clawed" → "Claude".')
+        hint.setStyleSheet("color: #9a9ba1; font-size: 11px;")
+        v.addWidget(hint)
+
+        self.dict_table = QTableWidget(0, 2)
+        self.dict_table.setHorizontalHeaderLabels(["Sounds like", "Correct to"])
+        self.dict_table.verticalHeader().setVisible(False)
+        self.dict_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.dict_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.dict_table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.dict_table.setMaximumHeight(130)
+        self._reload_dictionary_table()
+        v.addWidget(self.dict_table)
+
+        add_row = QHBoxLayout()
+        self.dict_wrong_input = QLineEdit()
+        self.dict_wrong_input.setPlaceholderText("Sounds like…")
+        self.dict_right_input = QLineEdit()
+        self.dict_right_input.setPlaceholderText("Correct to…")
+        add_btn = QPushButton("Add")
+        add_btn.clicked.connect(self._add_dictionary_entry)
+        remove_btn = QPushButton("Remove selected")
+        remove_btn.clicked.connect(self._remove_dictionary_entry)
+        add_row.addWidget(self.dict_wrong_input, stretch=1)
+        add_row.addWidget(self.dict_right_input, stretch=1)
+        add_row.addWidget(add_btn)
+        add_row.addWidget(remove_btn)
+        v.addLayout(add_row)
+        return card
+
+    def _reload_dictionary_table(self):
+        self.dict_table.setRowCount(0)
+        for wrong, right in config.load().get("custom_dictionary", {}).items():
+            row = self.dict_table.rowCount()
+            self.dict_table.insertRow(row)
+            self.dict_table.setItem(row, 0, QTableWidgetItem(wrong))
+            self.dict_table.setItem(row, 1, QTableWidgetItem(right))
+
+    def _add_dictionary_entry(self):
+        wrong = self.dict_wrong_input.text().strip()
+        right = self.dict_right_input.text().strip()
+        if not wrong or not right:
+            return
+        corrections = dict(config.load().get("custom_dictionary", {}))
+        corrections[wrong] = right
+        config.update(custom_dictionary=corrections)
+        self.dict_wrong_input.clear()
+        self.dict_right_input.clear()
+        self._reload_dictionary_table()
+
+    def _remove_dictionary_entry(self):
+        rows = sorted({idx.row() for idx in self.dict_table.selectedIndexes()}, reverse=True)
+        if not rows:
+            return
+        corrections = dict(config.load().get("custom_dictionary", {}))
+        for row in rows:
+            item = self.dict_table.item(row, 0)
+            if item:
+                corrections.pop(item.text(), None)
+        config.update(custom_dictionary=corrections)
+        self._reload_dictionary_table()
 
     def _build_output_card(self) -> QFrame:
         card = _card()

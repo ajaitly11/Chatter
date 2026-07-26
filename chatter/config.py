@@ -20,6 +20,9 @@ DEFAULTS = {
     # reports capabilities.supports_streaming == True (e.g. a moonshine-streaming
     # or nemotron-speech-streaming GGUF).
     "streaming_model_path": "",
+    # Personal corrections for words the ASR model consistently mishears
+    # (accents, names, jargon) — {"mis-heard term": "correct term"}.
+    "custom_dictionary": {},
 }
 
 
