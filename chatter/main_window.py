@@ -84,10 +84,6 @@ class MainWindow(QMainWindow):
         self.media_path: str | None = None
         self.last_segments = None
         self.worker: TranscribeWorker | None = None
-        # Plain attribute (not a widget read) so background threads — the
-        # push-to-talk hotkey handler — can safely read the current
-        # selection without touching QComboBox off the GUI thread.
-        self.selected_model_path: str | None = None
 
         root = QWidget()
         layout = QVBoxLayout(root)
@@ -132,7 +128,6 @@ class MainWindow(QMainWindow):
         row = QHBoxLayout()
         row.addWidget(QLabel("Model:"))
         self.model_combo = QComboBox()
-        self.model_combo.currentIndexChanged.connect(self._on_model_selection_changed)
         row.addWidget(self.model_combo, stretch=1)
 
         row.addWidget(QLabel("Backend:"))
@@ -251,10 +246,6 @@ class MainWindow(QMainWindow):
             for m in models:
                 self.model_combo.addItem(m.name, userData=str(m))
         self.update_transcribe_enabled()
-        self._on_model_selection_changed()
-
-    def _on_model_selection_changed(self, *_):
-        self.selected_model_path = self.model_combo.currentData()
 
     def open_file(self):
         path, _ = QFileDialog.getOpenFileName(

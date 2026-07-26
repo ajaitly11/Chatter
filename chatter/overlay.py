@@ -99,6 +99,12 @@ class Overlay(QWidget):
             self.show()
         self._animate_to(x, resting_y)
 
+    def update_live_text(self, text: str):
+        """Updates the label in place while listening, without touching the
+        hide timer or animation — for frequent partial-transcript updates."""
+        if self.isVisible():
+            self._label.setText(text)
+
     def flash_and_hide(self, state: str, text: str, delay_ms: int = 2200):
         self.show_state(state, text)
         self._hide_timer.start(delay_ms)

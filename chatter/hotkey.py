@@ -1,4 +1,7 @@
-"""Global push-to-talk: hold Right Option to record, release to transcribe,
+"""Global push-to-talk: hold Right Option to record. Audio is fed to a
+streaming-capable model live (as you speak, not after you release) via
+transcribe.cpp's Stream API, so the post-release wait is just the last
+fraction of a second of audio, not the whole utterance. Release to finalize,
 optionally clean up with the local formatter, and paste at the cursor.
 """
 
@@ -6,32 +9,32 @@ import logging
 import threading
 import traceback
 
-import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 from pynput import keyboard
 
 from . import config
 from . import paste_action
-from .audio_capture import MicRecorder
-from .transcription_service import service
+from .audio_capture import StreamingMicRecorder
+from .transcription_service import streaming_service
 
 logger = logging.getLogger("chatter.hotkey")
-
-SILENCE_AMPLITUDE = 0.005  # below this peak amplitude, treat as "no speech"
 
 
 class PushToTalkController(QObject):
     status_changed = pyqtSignal(str)
+    live_text_changed = pyqtSignal(str)
     result_ready = pyqtSignal(str, bool)  # (text, was_auto_pasted)
     error = pyqtSignal(str)
 
-    def __init__(self, get_model_path, formatter):
+    def __init__(self, get_streaming_model_path, formatter):
         super().__init__()
-        self._get_model_path = get_model_path
+        self._get_streaming_model_path = get_streaming_model_path
         self._formatter = formatter
-        self._recorder = MicRecorder()
+        self._recorder = StreamingMicRecorder()
         self._recording = False
         self._listener = None
+        self._stream = None
+        self._feeder_thread = None
 
     def start(self):
         self._listener = keyboard.Listener(
@@ -50,62 +53,84 @@ class PushToTalkController(QObject):
     def _on_press(self, key):
         if key != keyboard.Key.alt_r or self._recording:
             return
+
+        model_path = self._get_streaming_model_path()
+        if not model_path:
+            self.error.emit(
+                "No streaming model configured — set streaming_model_path in "
+                "Chatter's config.json to a model with supports_streaming=True."
+            )
+            return
+
+        try:
+            cfg = config.load()
+            self._stream = streaming_service.open_stream(model_path, cfg["backend"])
+        except Exception:
+            logger.exception("failed to open stream")
+            self.error.emit("Couldn't start the streaming model — see chatter.log.")
+            self._stream = None
+            return
+
         self._recording = True
         self._recorder.start()
-        logger.info("recording started")
+        logger.info("recording started (streaming)")
         self.status_changed.emit("Listening…")
+        self._feeder_thread = threading.Thread(target=self._feed_loop, daemon=True)
+        self._feeder_thread.start()
+
+    def _feed_loop(self):
+        try:
+            for chunk in self._recorder.chunks():
+                update = self._stream.feed(chunk)
+                if update.result_changed:
+                    text = self._stream.text()
+                    live = (text.committed + text.tentative).strip()
+                    if live:
+                        self.live_text_changed.emit(live)
+        except Exception:
+            logger.exception("stream feed loop failed")
 
     def _on_release(self, key):
         if key != keyboard.Key.alt_r or not self._recording:
             return
         self._recording = False
-        pcm = self._recorder.stop()
-        logger.info("recording stopped: %d samples, peak amplitude %.4f",
-                     pcm.size, float(np.abs(pcm).max()) if pcm.size else 0.0)
+        self._recorder.stop()  # queues a sentinel; feed loop drains and exits
+        logger.info("recording stopped")
         self.status_changed.emit("Transcribing…")
-        threading.Thread(target=self._process, args=(pcm,), daemon=True).start()
+        threading.Thread(target=self._finish, daemon=True).start()
 
-    def _process(self, pcm):
+    def _finish(self):
+        stream = self._stream
         try:
-            if pcm.size < 1600:  # under ~0.1s, likely an accidental tap
-                logger.info("skipped: recording too short")
-                self.status_changed.emit("Idle")
-                return
+            if self._feeder_thread is not None:
+                self._feeder_thread.join(timeout=5)
 
-            if np.abs(pcm).max() < SILENCE_AMPLITUDE:
-                logger.warning("skipped: recording is silence (check mic permission)")
-                self.error.emit(
-                    "No audio detected — check that Chatter has Microphone "
-                    "permission in System Settings > Privacy & Security."
-                )
-                self.status_changed.emit("Idle")
+            stream.finalize()
+            result = stream.text()
+            text = (result.committed + result.tentative).strip() or result.full.strip()
+            logger.info("finalized: %r", text)
+
+            if not text:
+                self.error.emit("No speech detected.")
                 return
 
             cfg = config.load()
-            model_path = self._get_model_path()
-            if not model_path:
-                self.error.emit("No model selected — open Chatter and pick a model first.")
-                self.status_changed.emit("Idle")
-                return
-
-            result = service.transcribe(pcm, model_path, cfg["backend"])
-            text = result.text.strip()
-            logger.info("transcribed: %r", text)
-
-            if cfg["formatting_enabled"] and text:
+            if cfg["formatting_enabled"]:
                 self.status_changed.emit("Cleaning up…")
                 text = self._formatter.format_transcript(text)
                 logger.info("formatted: %r", text)
 
-            if text:
-                pasted = paste_action.paste(text)
-                logger.info("paste_action.paste -> auto-pasted=%s", pasted)
-                self.result_ready.emit(text, pasted)
-            else:
-                logger.warning("empty transcript, nothing to paste")
-                self.error.emit("Transcription came back empty.")
+            pasted = paste_action.paste(text)
+            logger.info("paste_action.paste -> auto-pasted=%s", pasted)
+            self.result_ready.emit(text, pasted)
         except Exception:
             logger.exception("push-to-talk pipeline failed")
             self.error.emit(traceback.format_exc())
         finally:
+            try:
+                stream.reset()
+            except Exception:
+                pass
+            self._stream = None
+            self._feeder_thread = None
             self.status_changed.emit("Idle")

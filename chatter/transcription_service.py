@@ -85,6 +85,17 @@ class TranscriptionService:
             self._ensure_session(model_path, backend)
             return self._session.run(pcm)
 
+    def open_stream(self, model_path: str, backend: str):
+        """Returns a live Stream for incremental feed()/text()/finalize() calls.
+        Only the lock-guarded session setup happens here — feed() calls happen
+        outside the lock over the recording's lifetime, so this is meant for a
+        single dedicated-purpose service instance (see `streaming_service`
+        below), not one shared with concurrent batch transcribe() calls.
+        """
+        with self._lock:
+            self._ensure_session(model_path, backend)
+            return self._session.stream()
+
     def close(self):
         if self._session is not None:
             self._session.__exit__(None, None, None)
@@ -97,3 +108,6 @@ class TranscriptionService:
 
 
 service = TranscriptionService()
+# Separate persistent Model+Session dedicated to push-to-talk streaming, since
+# it typically uses a different (streaming-capable) model than file transcription.
+streaming_service = TranscriptionService()

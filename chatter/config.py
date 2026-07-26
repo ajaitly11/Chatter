@@ -13,6 +13,13 @@ DEFAULTS = {
     "llama_model_path": "",
     "llama_port": 8712,
     "push_to_talk_enabled": True,
+    # Push-to-talk uses a dedicated streaming-capable model (session.stream()),
+    # separate from the batch model used for file transcription — most ASR
+    # architectures (including default Whisper/Parakeet) don't support
+    # incremental streaming in transcribe.cpp; this must point at one that
+    # reports capabilities.supports_streaming == True (e.g. a moonshine-streaming
+    # or nemotron-speech-streaming GGUF).
+    "streaming_model_path": "",
 }
 
 

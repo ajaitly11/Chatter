@@ -7,12 +7,18 @@ of whisper.cpp directly. Two ways to use it:
 
 - **File transcription** — open an audio/video file, pick a model, transcribe,
   export `.txt` or `.srt`.
-- **Push-to-talk** — hold **Right Option (⌥)** anywhere on your Mac, speak,
-  release, and the transcribed (optionally AI-cleaned-up) text is pasted at
-  your cursor. Wispr-Flow-style.
+- **Push-to-talk** — hold **Right Option (⌥)** anywhere on your Mac and speak.
+  Audio is fed to a streaming-capable model *live*, as you talk — not batched
+  up and processed after you let go — so release just finalizes the last
+  fraction of a second and pastes at your cursor. Wispr-Flow-style, live
+  partial captions included.
 
-Both flows share one persistent, Metal-accelerated `transcribe.cpp` session so
-push-to-talk stays fast — the model is loaded once, not on every hotkey press.
+File transcription and push-to-talk each keep their own persistent,
+Metal-accelerated `transcribe.cpp` session (loaded once, reused on every call/
+hotkey press) — they use different models, since push-to-talk needs a model
+whose capabilities report `supports_streaming=True` (most architectures,
+including Whisper and the default Parakeet-TDT release, don't support this
+in transcribe.cpp — see "Push-to-talk setup" below).
 
 An optional local-LLM pass (any Gemma/Llama-family GGUF model served by
 `llama-server`) cleans up filler words and punctuation before pasting.
@@ -39,16 +45,26 @@ pip install -r requirements.txt
 `pip install` should just work. If it doesn't find a wheel for your platform,
 see "Building from source" below.
 
-## 3. Download at least one model
+## 3. Download models
 
-Models are GGUF files hosted under the `handy-computer` org on Hugging Face.
-Drop them into `models/`. Two solid starting points:
+Models are GGUF files hosted under the `handy-computer` org on Hugging Face
+(`https://huggingface.co/handy-computer`, `<model>-gguf` repos — Q8_0 is a
+good default quant). Drop them into `models/`.
+
+For **file transcription**, any batch model works, e.g.:
 
 - `whisper-large-v3-turbo-Q8_0.gguf` — great general-purpose accuracy, 100+ languages
 - `parakeet-tdt-0.6b-v2-Q8_0.gguf` — fast, English-only, no length cap per call
 
-Grab these from `https://huggingface.co/handy-computer` — look for the
-`<model>-gguf` repos and download the quant you want (Q8_0 is a good default).
+For **push-to-talk**, you need a model that actually supports incremental
+streaming — check with `model.capabilities.supports_streaming` in a Python
+shell before relying on one. `moonshine-streaming-tiny-Q8_0.gguf` (from the
+`moonshine-streaming-tiny-gguf` repo, ~48MB) is a good default: small, fast,
+and confirmed streaming-capable. Chatter auto-detects it if present in
+`models/`; point `streaming_model_path` in
+`~/Library/Application Support/Chatter/config.json` at a different one
+(e.g. `nemotron-speech-streaming-en-0.6b-gguf` for higher accuracy) if you'd
+rather use that.
 
 ## 4. Run it
 
@@ -81,10 +97,13 @@ isn't a signed/frozen app — see "Known limitations" below):
 3. **System Settings → Privacy & Security → Microphone** — grant when
    prompted, needed to record your voice.
 
-Once granted, hold Right Option anywhere, speak, and release — the text
-pastes wherever your cursor is focused. Toggle push-to-talk on/off from the
-menu-bar (tray) icon; closing the main window does not quit the app, only
-"Quit Chatter" from the tray menu does.
+Once granted, hold Right Option anywhere, speak, and release — a status pill
+slides up from the bottom of your screen showing a live partial transcript
+while you talk, and the final (optionally cleaned-up) text pastes wherever
+your cursor is focused. Even without Accessibility granted, the result is
+always copied to the clipboard, so manual Cmd+V works as a fallback. Toggle
+push-to-talk on/off from the menu-bar (tray) icon; closing the main window
+does not quit the app, only "Quit Chatter" from the tray menu does.
 
 ## AI cleanup (optional)
 
@@ -107,9 +126,14 @@ the raw transcript — cleanup is never required for either flow to work.
 - SRT export only works for models that return segment timestamps (Whisper
   family does; some Parakeet/Canary variants don't expose them yet — the
   button is greyed out when that's the case).
-- transcribe.cpp serializes one run per model session; Chatter keeps a single
-  persistent session for both the file-open flow and push-to-talk, so only
-  one transcription runs at a time.
+- transcribe.cpp serializes one run per model session; Chatter keeps one
+  persistent session per flow (file transcription and push-to-talk each have
+  their own), so within a flow only one transcription runs at a time.
+- Gemma's chat template defaults to emitting a chain-of-thought block before
+  its answer, which can eat the whole token budget and return an empty
+  cleanup result — Chatter disables it via `chat_template_kwargs:
+  {enable_thinking: false}`. Worth checking for if you swap in a different
+  reasoning-capable model for the formatting pass.
 - If you hit a `transcribe_cpp` import error, check
   `transcribe_cpp.backends()` in a Python shell to see what's registered on
   your machine — the API surface is still evolving (library is v0.1.x).

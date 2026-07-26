@@ -1,5 +1,6 @@
 import logging
 import sys
+import threading
 from pathlib import Path
 
 from PyQt6.QtCore import Qt
@@ -13,7 +14,9 @@ from .hotkey import PushToTalkController
 from .logging_setup import configure as configure_logging
 from .main_window import MainWindow
 from .overlay import Overlay
-from .transcription_service import service
+from .transcription_service import MODELS_DIR, service
+
+DEFAULT_STREAMING_MODEL = MODELS_DIR / "moonshine-streaming-tiny-Q8_0.gguf"
 
 STYLE_PATH = Path(__file__).parent / "style.qss"
 logger = logging.getLogger("chatter.app")
@@ -58,11 +61,17 @@ def run():
     window = MainWindow(formatter)
     overlay = Overlay()
 
-    def get_model_path():
-        return window.selected_model_path
+    def get_streaming_model_path():
+        configured = config.load().get("streaming_model_path")
+        if configured:
+            return configured
+        if DEFAULT_STREAMING_MODEL.exists():
+            return str(DEFAULT_STREAMING_MODEL)
+        return None
 
-    hotkey = PushToTalkController(get_model_path, formatter)
+    hotkey = PushToTalkController(get_streaming_model_path, formatter)
     hotkey.status_changed.connect(window._on_hotkey_status)
+    hotkey.live_text_changed.connect(lambda text: overlay.update_live_text(_truncate(text, 60)))
 
     _WORKING_STATES = {"Transcribing…", "Cleaning up…"}
 
@@ -149,7 +158,6 @@ def run():
         hotkey.start()
 
     if cfg.get("formatting_enabled", True):
-        import threading
         threading.Thread(target=formatter.warm_up, daemon=True).start()
 
     window.show()
