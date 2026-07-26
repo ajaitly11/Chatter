@@ -1,3 +1,4 @@
+import logging
 import sys
 from pathlib import Path
 
@@ -6,12 +7,16 @@ from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon, QMenu
 
 from . import config
+from . import permissions
 from .formatter import Formatter
 from .hotkey import PushToTalkController
+from .logging_setup import configure as configure_logging
 from .main_window import MainWindow
+from .overlay import Overlay
 from .transcription_service import service
 
 STYLE_PATH = Path(__file__).parent / "style.qss"
+logger = logging.getLogger("chatter.app")
 
 
 def _make_icon() -> QIcon:
@@ -33,7 +38,15 @@ def _make_icon() -> QIcon:
     return QIcon(pixmap)
 
 
+def _truncate(text: str, n: int = 46) -> str:
+    text = text.replace("\n", " ").strip()
+    return text if len(text) <= n else text[: n - 1] + "…"
+
+
 def run():
+    configure_logging()
+    logger.info("Chatter starting")
+
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
     app.setStyleSheet(STYLE_PATH.read_text())
@@ -43,13 +56,36 @@ def run():
 
     formatter = Formatter()
     window = MainWindow(formatter)
+    overlay = Overlay()
 
     def get_model_path():
-        return window.model_combo.currentData()
+        return window.selected_model_path
 
     hotkey = PushToTalkController(get_model_path, formatter)
     hotkey.status_changed.connect(window._on_hotkey_status)
-    hotkey.error.connect(lambda msg: QMessageBox.warning(window, "Push-to-talk error", msg))
+
+    _WORKING_STATES = {"Transcribing…", "Cleaning up…"}
+
+    def on_status(status: str):
+        if status == "Listening…":
+            overlay.show_state("listening", status)
+        elif status in _WORKING_STATES:
+            overlay.show_state("working", status)
+        # "Idle" is handled by result_ready/error, which own the final message + hide.
+
+    hotkey.status_changed.connect(on_status)
+
+    def on_result(text: str, pasted: bool):
+        if pasted:
+            overlay.flash_and_hide("done", f"Pasted: {_truncate(text)}")
+        else:
+            overlay.flash_and_hide(
+                "done", f"Copied to clipboard: {_truncate(text)}", delay_ms=3200
+            )
+
+    hotkey.result_ready.connect(on_result)
+    hotkey.error.connect(lambda msg: overlay.flash_and_hide("error", _truncate(msg, 60), delay_ms=3200))
+    hotkey.error.connect(lambda msg: logger.warning("push-to-talk error: %s", msg))
 
     tray = QSystemTrayIcon(icon)
     tray.setToolTip("Chatter")
@@ -89,8 +125,32 @@ def run():
     tray.setContextMenu(menu)
     tray.show()
 
+    # Accessibility trust is tied to *this* launching bundle's identity
+    # (Chatter.app vs. a bare `python main.py` run from Terminal each get
+    # their own entry) — actively request it so macOS shows the real
+    # permission prompt and lists this app in System Settings, instead of
+    # auto-paste silently doing nothing.
+    if not permissions.is_trusted():
+        logger.warning("Accessibility not trusted — requesting")
+        permissions.request_trust()
+        QMessageBox.information(
+            window,
+            "Permission needed for auto-paste",
+            "Chatter needs Accessibility permission to auto-paste push-to-talk "
+            "transcripts at your cursor.\n\n"
+            "macOS should now show a permission prompt (or Chatter will appear "
+            "in System Settings > Privacy & Security > Accessibility) — enable "
+            "it there, then try push-to-talk again.\n\n"
+            "Until then, transcripts are still copied to your clipboard, so "
+            "Cmd+V works manually.",
+        )
+
     if cfg.get("push_to_talk_enabled", True):
         hotkey.start()
+
+    if cfg.get("formatting_enabled", True):
+        import threading
+        threading.Thread(target=formatter.warm_up, daemon=True).start()
 
     window.show()
     sys.exit(app.exec())

@@ -59,6 +59,11 @@ class Formatter:
             time.sleep(0.5)
         return False
 
+    def warm_up(self):
+        """Spawns llama-server ahead of time so the first real transcription
+        doesn't pay the ~5-10s model-load cost."""
+        self._ensure_server()
+
     def format_transcript(self, raw_text: str) -> str:
         try:
             if not self._ensure_server():
@@ -71,6 +76,11 @@ class Formatter:
                 ],
                 "temperature": 0.2,
                 "max_tokens": max(256, len(raw_text.split()) * 3),
+                # Gemma's chat template defaults to emitting a chain-of-thought
+                # "reasoning_content" block before the real answer — for a
+                # quick cleanup pass that just burns the token budget on
+                # thinking and leaves nothing for the actual output.
+                "chat_template_kwargs": {"enable_thinking": False},
             }).encode("utf-8")
 
             req = urllib.request.Request(
@@ -81,7 +91,8 @@ class Formatter:
             )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 data = json.loads(resp.read())
-            return data["choices"][0]["message"]["content"].strip()
+            cleaned = data["choices"][0]["message"]["content"].strip()
+            return cleaned or raw_text
         except Exception:
             return raw_text
 
