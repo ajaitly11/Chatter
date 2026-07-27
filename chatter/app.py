@@ -16,7 +16,14 @@ from .main_window import MainWindow
 from .overlay import Overlay
 from .transcription_service import MODELS_DIR, service
 
-DEFAULT_STREAMING_MODEL = MODELS_DIR / "moonshine-streaming-tiny-Q8_0.gguf"
+# Preference order for auto-detecting a push-to-talk model when
+# streaming_model_path isn't set in config: nemotron-speech-streaming
+# measured faster *and* more accurate than moonshine-streaming-tiny despite
+# being ~15x the file size (RTF 0.07 vs 0.15-0.28 on the same test clip).
+_STREAMING_MODEL_CANDIDATES = [
+    MODELS_DIR / "nemotron-speech-streaming-en-0.6b-Q8_0.gguf",
+    MODELS_DIR / "moonshine-streaming-tiny-Q8_0.gguf",
+]
 
 STYLE_PATH = Path(__file__).parent / "style.qss"
 logger = logging.getLogger("chatter.app")
@@ -72,8 +79,9 @@ def run():
         configured = config.load().get("streaming_model_path")
         if configured:
             return configured
-        if DEFAULT_STREAMING_MODEL.exists():
-            return str(DEFAULT_STREAMING_MODEL)
+        for candidate in _STREAMING_MODEL_CANDIDATES:
+            if candidate.exists():
+                return str(candidate)
         return None
 
     hotkey = PushToTalkController(get_streaming_model_path, formatter)

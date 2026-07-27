@@ -1,4 +1,5 @@
-"""Global push-to-talk: hold Right Option to record. Audio is fed to a
+"""Global push-to-talk: hold the configured key (default Right Shift) to
+record. Audio is fed to a
 streaming-capable model live (as you speak, not after you release) via
 transcribe.cpp's Stream API. Per-chunk cost grows with how much audio a
 stream has accumulated, so long holds periodically finalize and reopen a
@@ -21,13 +22,19 @@ from . import dictionary
 from . import paste_action
 from . import sound
 from .audio_capture import SAMPLE_RATE, StreamingMicRecorder
-from .native_hotkey import RIGHT_OPTION_KEYCODE, RawKeyListener
+from .native_hotkey import RawKeyListener
 from .transcription_service import streaming_service
 
 logger = logging.getLogger("chatter.hotkey")
 
 SEGMENT_SAMPLES = SAMPLE_RATE * 10  # reopen the stream every ~10s of audio
+LIVE_PREVIEW_WORDS = 5  # overlay shows a rolling window, not the whole utterance
 _WORD_RE = re.compile(r"[a-z0-9']+")
+
+
+def _last_n_words(text: str, n: int) -> str:
+    words = text.split()
+    return " ".join(words[-n:]) if len(words) > n else text
 
 
 def _join_segments(segments: list[str], max_overlap_words: int = 8) -> str:
@@ -83,7 +90,8 @@ class PushToTalkController(QObject):
         self._feeder_thread = None
 
     def start(self):
-        self._listener = RawKeyListener(RIGHT_OPTION_KEYCODE, self._on_press, self._on_release)
+        keycode = config.load().get("hotkey_keycode", 60)
+        self._listener = RawKeyListener(keycode, self._on_press, self._on_release)
         self._listener.start()
         logger.info("push-to-talk listener started")
 
@@ -131,7 +139,8 @@ class PushToTalkController(QObject):
         self._feeder_thread.start()
 
     def _live_preview(self, current_text: str) -> str:
-        return _join_segments([*self._segments, current_text])
+        full = _join_segments([*self._segments, current_text])
+        return _last_n_words(full, LIVE_PREVIEW_WORDS)
 
     def _feed_loop(self):
         try:

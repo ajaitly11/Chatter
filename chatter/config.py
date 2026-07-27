@@ -13,6 +13,9 @@ DEFAULTS = {
     "llama_model_path": "",
     "llama_port": 8712,
     "push_to_talk_enabled": True,
+    # macOS virtual keycode for the push-to-talk hold key. Defaults to Right
+    # Shift (60); see chatter/native_hotkey.py for other supported keycodes.
+    "hotkey_keycode": 60,
     # Push-to-talk uses a dedicated streaming-capable model (session.stream()),
     # separate from the batch model used for file transcription — most ASR
     # architectures (including default Whisper/Parakeet) don't support

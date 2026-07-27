@@ -42,7 +42,15 @@ class Formatter:
 
         self._port = port
         self._proc = subprocess.Popen(
-            [bin_path, "-m", model_path, "--port", str(port), "-ngl", "999", "--no-webui"],
+            [
+                bin_path, "-m", model_path, "--port", str(port), "-ngl", "999", "--no-webui",
+                # Every formatting call is a unique one-off prompt (never
+                # repeated/incremental like a chat history), so llama-server's
+                # prompt cache — built for reusing prior context — only adds
+                # lookup overhead here. Measured: disabling it cut prefill
+                # time roughly 6x (1887ms -> 298ms for a 33-59 token prompt).
+                "--cache-ram", "0",
+            ],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )

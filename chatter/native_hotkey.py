@@ -22,12 +22,22 @@ import Quartz
 
 logger = logging.getLogger("chatter.native_hotkey")
 
+# macOS virtual keycodes for the modifier keys we might bind push-to-talk to.
 RIGHT_OPTION_KEYCODE = 61  # kVK_RightOption
+RIGHT_SHIFT_KEYCODE = 60  # kVK_RightShift
+
+# Each pure-modifier key fires flagsChanged (never keyDown/keyUp) with its
+# own bit in the event flags telling us whether it just went down or up.
+_FLAG_MASK_BY_KEYCODE = {
+    RIGHT_OPTION_KEYCODE: Quartz.kCGEventFlagMaskAlternate,
+    RIGHT_SHIFT_KEYCODE: Quartz.kCGEventFlagMaskShift,
+}
 
 
 class RawKeyListener:
     def __init__(self, keycode: int, on_down, on_up):
         self._keycode = keycode
+        self._flag_mask = _FLAG_MASK_BY_KEYCODE[keycode]
         self._on_down = on_down
         self._on_up = on_up
         self._thread = None
@@ -35,14 +45,10 @@ class RawKeyListener:
 
     def _callback(self, proxy, event_type, event, refcon):
         try:
-            # Option (like all pure modifier keys) doesn't generate
-            # keyDown/keyUp — pressing/releasing it fires flagsChanged, with
-            # the keycode identifying *which* modifier key changed and the
-            # Alternate flag's on/off state telling us press vs. release.
             if event_type == Quartz.kCGEventFlagsChanged:
                 code = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
                 if code == self._keycode:
-                    is_down = bool(Quartz.CGEventGetFlags(event) & Quartz.kCGEventFlagMaskAlternate)
+                    is_down = bool(Quartz.CGEventGetFlags(event) & self._flag_mask)
                     (self._on_down if is_down else self._on_up)()
         except Exception:
             logger.exception("hotkey tap callback failed")
