@@ -15,12 +15,13 @@ import threading
 import traceback
 
 from PyQt6.QtCore import QObject, pyqtSignal
-from pynput import keyboard
 
 from . import config
 from . import dictionary
 from . import paste_action
+from . import sound
 from .audio_capture import SAMPLE_RATE, StreamingMicRecorder
+from .native_hotkey import RIGHT_OPTION_KEYCODE, RawKeyListener
 from .transcription_service import streaming_service
 
 logger = logging.getLogger("chatter.hotkey")
@@ -82,10 +83,7 @@ class PushToTalkController(QObject):
         self._feeder_thread = None
 
     def start(self):
-        self._listener = keyboard.Listener(
-            on_press=self._on_press,
-            on_release=self._on_release,
-        )
+        self._listener = RawKeyListener(RIGHT_OPTION_KEYCODE, self._on_press, self._on_release)
         self._listener.start()
         logger.info("push-to-talk listener started")
 
@@ -95,8 +93,8 @@ class PushToTalkController(QObject):
             self._listener = None
             logger.info("push-to-talk listener stopped")
 
-    def _on_press(self, key):
-        if key != keyboard.Key.alt_r or self._recording:
+    def _on_press(self):
+        if self._recording:
             return
         if self._processing:
             logger.info("press ignored — still finishing the previous utterance")
@@ -126,6 +124,7 @@ class PushToTalkController(QObject):
         self._segment_samples = 0
         self._recording = True
         self._recorder.start()
+        sound.play_start()
         logger.info("recording started (streaming)")
         self.status_changed.emit("Listening…")
         self._feeder_thread = threading.Thread(target=self._feed_loop, daemon=True)
@@ -175,12 +174,13 @@ class PushToTalkController(QObject):
             pass
         return text
 
-    def _on_release(self, key):
-        if key != keyboard.Key.alt_r or not self._recording:
+    def _on_release(self):
+        if not self._recording:
             return
         self._recording = False
         self._processing = True
         self._recorder.stop()  # queues a sentinel; feed loop drains and exits
+        sound.play_stop()
         logger.info("recording stopped")
         self.status_changed.emit("Transcribing…")
         threading.Thread(target=self._finish, daemon=True).start()

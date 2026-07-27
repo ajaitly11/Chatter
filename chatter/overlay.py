@@ -1,42 +1,95 @@
-"""A small pill that slides in from the bottom-right corner of the screen
-while push-to-talk is active — visual confirmation the hotkey was heard and
-a live look at what's being transcribed. Never steals focus from whatever
-you're typing into.
+"""A small HUD that slides in from the bottom-right corner of the screen
+while push-to-talk is active — an animated waveform while listening, a live
+caption of what's being transcribed, and a checkmark/warning glyph when
+done. Never steals focus from whatever you're typing into.
 """
 
-from PyQt6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, Qt, QTimer
-from PyQt6.QtGui import QColor, QCursor, QPainter
-from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QWidget
+import math
 
-WIDTH = 340
-HEIGHT = 52
-RIGHT_MARGIN = 24
-BOTTOM_MARGIN = 28
+from PyQt6.QtCore import (
+    QEasingCurve,
+    QPoint,
+    QPropertyAnimation,
+    QRectF,
+    Qt,
+    QTimer,
+    pyqtProperty,
+)
+from PyQt6.QtGui import QColor, QCursor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen
+from PyQt6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QWidget
+
+HEIGHT = 56
+MIN_WIDTH = 190
+MAX_WIDTH = 440
+RIGHT_MARGIN = 26
+BOTTOM_MARGIN = 30
+ICON_SIZE = 26
 
 STATE_COLORS = {
-    "listening": "#5b8dee",
-    "working": "#e0a83c",
-    "done": "#4caf6d",
-    "error": "#e05c5c",
+    "listening": QColor("#5b8dee"),
+    "working": QColor("#e0a83c"),
+    "done": QColor("#4caf6d"),
+    "error": QColor("#e0605c"),
 }
 
+_BAR_COUNT = 4
 
-class _Dot(QWidget):
+
+class _Icon(QWidget):
+    """Animated waveform while busy; a checkmark or warning glyph at rest."""
+
     def __init__(self):
         super().__init__()
-        self.setFixedSize(10, 10)
-        self._color = QColor(STATE_COLORS["listening"])
+        self.setFixedSize(ICON_SIZE, ICON_SIZE)
+        self._color = STATE_COLORS["listening"]
+        self._phase = 0.0
+        self._mode = "wave"  # "wave" | "check" | "warn"
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._tick)
+        self._timer.start(60)
 
-    def set_color(self, hex_color: str):
-        self._color = QColor(hex_color)
+    def set_state(self, state: str):
+        self._color = STATE_COLORS.get(state, STATE_COLORS["listening"])
+        self._mode = {"done": "check", "error": "warn"}.get(state, "wave")
         self.update()
+
+    def _tick(self):
+        if self._mode == "wave":
+            self._phase += 0.35
+            self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(self._color)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawEllipse(0, 0, 10, 10)
+        painter.setBrush(self._color)
+
+        if self._mode == "wave":
+            bar_w = 3.4
+            gap = 3.2
+            total_w = _BAR_COUNT * bar_w + (_BAR_COUNT - 1) * gap
+            x0 = (self.width() - total_w) / 2
+            mid = self.height() / 2
+            for i in range(_BAR_COUNT):
+                amp = 0.35 + 0.65 * abs(math.sin(self._phase + i * 0.9))
+                h = max(4.0, amp * (self.height() - 6))
+                x = x0 + i * (bar_w + gap)
+                painter.drawRoundedRect(QRectF(x, mid - h / 2, bar_w, h), 1.7, 1.7)
+        elif self._mode == "check":
+            pen = QPen(self._color, 2.6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            path = QPainterPath()
+            w, h = self.width(), self.height()
+            path.moveTo(w * 0.22, h * 0.55)
+            path.lineTo(w * 0.42, h * 0.74)
+            path.lineTo(w * 0.80, h * 0.30)
+            painter.drawPath(path)
+        elif self._mode == "warn":
+            font = painter.font()
+            font.setPointSize(15)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "!")
 
 
 class Overlay(QWidget):
@@ -49,75 +102,140 @@ class Overlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.resize(WIDTH, HEIGHT)
+        self.resize(MIN_WIDTH, HEIGHT)
+        self._opacity = 1.0
+
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(28)
+        shadow.setOffset(0, 8)
+        shadow.setColor(QColor(0, 0, 0, 140))
+        self.setGraphicsEffect(shadow)
 
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(18, 0, 18, 0)
-        layout.setSpacing(10)
-        self._dot = _Dot()
-        layout.addWidget(self._dot)
+        layout.setContentsMargins(16, 0, 20, 0)
+        layout.setSpacing(12)
+        self._icon = _Icon()
+        layout.addWidget(self._icon)
+
         self._label = QLabel("Listening…")
         self._label.setWordWrap(False)
-        self._label.setStyleSheet("color: white; font-size: 13px; font-weight: 500;")
+        font = QFont()
+        font.setPointSize(13)
+        font.setWeight(QFont.Weight.DemiBold)
+        self._label.setFont(font)
+        self._label.setStyleSheet("color: #f2f2f4;")
         layout.addWidget(self._label, stretch=1)
 
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._slide_out)
 
-        self._animation = QPropertyAnimation(self, b"pos")
-        self._animation.setDuration(260)
-        self._animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._move_anim = QPropertyAnimation(self, b"pos")
+        self._move_anim.setDuration(300)
+        self._move_anim.setEasingCurve(QEasingCurve.Type.OutBack)
+
+        self._fade_anim = QPropertyAnimation(self, b"hudOpacity")
+        self._fade_anim.setDuration(220)
+
         self._hiding = False
         self._screen_geometry = None
+
+    # windowOpacity as an animatable Qt property -------------------------
+
+    def _get_opacity(self):
+        return self._opacity
+
+    def _set_opacity(self, value):
+        self._opacity = value
+        self.setWindowOpacity(value)
+
+    hudOpacity = pyqtProperty(float, _get_opacity, _set_opacity)
+
+    # painting -------------------------------------------------------------
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QColor(30, 31, 34, 235))
-        painter.setPen(Qt.PenStyle.NoPen)
-        painter.drawRoundedRect(self.rect(), HEIGHT / 2, HEIGHT / 2)
 
-    def _positions(self):
-        # Pin to whichever screen the cursor was on when we started showing —
-        # recomputed only on a fresh appearance, so we don't jump screens
-        # mid-animation if the cursor moves while the pill is up. With
-        # multiple monitors, primaryScreen() may not be the one in use.
+        rect = QRectF(self.rect()).adjusted(0, 0, -0.5, -0.5)
+        radius = HEIGHT / 2
+
+        gradient = QLinearGradient(0, 0, 0, self.height())
+        gradient.setColorAt(0.0, QColor(38, 39, 43, 240))
+        gradient.setColorAt(1.0, QColor(24, 25, 28, 240))
+        painter.setBrush(gradient)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(rect, radius, radius)
+
+        highlight = QPen(QColor(255, 255, 255, 22), 1)
+        painter.setPen(highlight)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), radius, radius)
+
+    # sizing -----------------------------------------------------------
+
+    def _fit_width(self, text: str) -> int:
+        metrics = QFontMetrics(self._label.font())
+        content_w = ICON_SIZE + 12 + 16 + 20 + metrics.horizontalAdvance(text)
+        return max(MIN_WIDTH, min(MAX_WIDTH, content_w))
+
+    # positioning --------------------------------------------------------
+
+    def _target_x_and_ys(self, width: int):
         if self._screen_geometry is None:
             screen_obj = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
             self._screen_geometry = screen_obj.geometry()
         screen = self._screen_geometry
-        resting_x = screen.x() + screen.width() - WIDTH - RIGHT_MARGIN
+        resting_x = screen.x() + screen.width() - width - RIGHT_MARGIN
         resting_y = screen.y() + screen.height() - HEIGHT - BOTTOM_MARGIN
-        # Off-screen toward the bottom-right corner, so the entrance reads as
-        # sliding in from the bottom-right rather than straight up.
-        hidden_x = screen.x() + screen.width() + WIDTH
+        hidden_x = screen.x() + screen.width() + width
         hidden_y = screen.y() + screen.height() + HEIGHT
         return (resting_x, resting_y), (hidden_x, hidden_y)
 
     def _animate_to(self, x: int, y: int):
-        self._animation.stop()
-        self._animation.setStartValue(self.pos())
-        self._animation.setEndValue(QPoint(x, y))
-        self._animation.start()
+        self._move_anim.stop()
+        self._move_anim.setStartValue(self.pos())
+        self._move_anim.setEndValue(QPoint(x, y))
+        self._move_anim.start()
+
+    def _apply_text(self, text: str):
+        self._label.setText(text)
+        width = self._fit_width(text)
+        current_top_right = self.x() + self.width()
+        self.resize(width, HEIGHT)
+        # keep the right edge anchored so the pill grows/shrinks leftward,
+        # not off the edge of the screen
+        if self.isVisible():
+            self.move(current_top_right - width, self.y())
+
+    # public API -----------------------------------------------------------
 
     def show_state(self, state: str, text: str):
         self._hiding = False
-        self._dot.set_color(STATE_COLORS.get(state, STATE_COLORS["listening"]))
-        self._label.setText(text)
+        self._icon.set_state(state)
         self._hide_timer.stop()
 
-        (rx, ry), (hx, hy) = self._positions()
+        width = self._fit_width(text)
+        (rx, ry), (hx, hy) = self._target_x_and_ys(width)
         if not self.isVisible():
+            self.resize(width, HEIGHT)
             self.move(hx, hy)
+            self._opacity = 0.0
+            self.setWindowOpacity(0.0)
             self.show()
+            self._fade_anim.stop()
+            self._fade_anim.setStartValue(0.0)
+            self._fade_anim.setEndValue(1.0)
+            self._fade_anim.start()
+        self._label.setText(text)
+        self.resize(width, HEIGHT)
         self._animate_to(rx, ry)
 
     def update_live_text(self, text: str):
-        """Updates the label in place while listening, without touching the
-        hide timer or animation — for frequent partial-transcript updates."""
+        """Updates the caption in place while listening — grows the pill to
+        fit, anchored to the right edge, without touching the hide timer."""
         if self.isVisible():
-            self._label.setText(text)
+            self._apply_text(text)
 
     def flash_and_hide(self, state: str, text: str, delay_ms: int = 2200):
         self.show_state(state, text)
@@ -127,9 +245,13 @@ class Overlay(QWidget):
         if self._hiding:
             return
         self._hiding = True
-        (_rx, _ry), (hx, hy) = self._positions()
+        (_rx, _ry), (hx, hy) = self._target_x_and_ys(self.width())
         self._animate_to(hx, hy)
-        QTimer.singleShot(self._animation.duration() + 20, self._finish_hide)
+        self._fade_anim.stop()
+        self._fade_anim.setStartValue(1.0)
+        self._fade_anim.setEndValue(0.0)
+        self._fade_anim.start()
+        QTimer.singleShot(self._move_anim.duration() + 20, self._finish_hide)
 
     def _finish_hide(self):
         if self._hiding:
