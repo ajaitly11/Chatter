@@ -36,20 +36,31 @@ def _active_screen_geometry():
         frontmost = workspace.frontmostApplication()
         if frontmost is not None:
             pid = frontmost.processIdentifier()
+            app_name = frontmost.localizedName()
             windows = Quartz.CGWindowListCopyWindowInfo(
                 Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID
             )
+            layer0_found = False
             for w in windows:
                 if w.get("kCGWindowOwnerPID") == pid and w.get("kCGWindowLayer") == 0:
+                    layer0_found = True
                     bounds = w.get("kCGWindowBounds")
                     center = QPoint(
                         int(bounds["X"] + bounds["Width"] / 2),
                         int(bounds["Y"] + bounds["Height"] / 2),
                     )
                     screen = QApplication.screenAt(center)
+                    logger.info(
+                        "frontmost=%r pid=%s bounds=%s -> screen=%s",
+                        app_name, pid, dict(bounds), screen.name() if screen else None,
+                    )
                     if screen:
                         return screen.geometry()
                     break
+            if not layer0_found:
+                logger.warning("frontmost=%r pid=%s had no on-screen layer-0 window — falling back to primaryScreen", app_name, pid)
+        else:
+            logger.warning("no frontmost application found — falling back to primaryScreen")
     except Exception:
         logger.exception("couldn't determine the active app's screen")
     return QApplication.primaryScreen().geometry()
@@ -280,6 +291,7 @@ class Overlay(QWidget):
             self._opacity = 0.0
             self.setWindowOpacity(0.0)
             self.show()
+            logger.info("overlay shown: resting at (%d, %d) size %dx%d", rx, ry, width, HEIGHT)
             self._fade_anim.stop()
             self._fade_anim.setStartValue(0.0)
             self._fade_anim.setEndValue(1.0)
