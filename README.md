@@ -7,11 +7,12 @@ of whisper.cpp directly. Two ways to use it:
 
 - **File transcription** — open an audio/video file, pick a model, transcribe,
   export `.txt` or `.srt`.
-- **Push-to-talk** — hold **Right Option (⌥)** anywhere on your Mac and speak.
+- **Push-to-talk** — hold **Right Shift** anywhere on your Mac and speak.
   Audio is fed to a streaming-capable model *live*, as you talk — not batched
   up and processed after you let go — so release just finalizes the last
   fraction of a second and pastes at your cursor. Wispr-Flow-style, live
-  partial captions included.
+  partial captions included. The key is configurable (`hotkey_keycode` in
+  config.json — see `chatter/native_hotkey.py` for supported keycodes).
 
 File transcription and push-to-talk each keep their own persistent,
 Metal-accelerated `transcribe.cpp` session (loaded once, reused on every call/
@@ -58,13 +59,19 @@ For **file transcription**, any batch model works, e.g.:
 
 For **push-to-talk**, you need a model that actually supports incremental
 streaming — check with `model.capabilities.supports_streaming` in a Python
-shell before relying on one. `moonshine-streaming-tiny-Q8_0.gguf` (from the
-`moonshine-streaming-tiny-gguf` repo, ~48MB) is a good default: small, fast,
-and confirmed streaming-capable. Chatter auto-detects it if present in
-`models/`; point `streaming_model_path` in
-`~/Library/Application Support/Chatter/config.json` at a different one
-(e.g. `nemotron-speech-streaming-en-0.6b-gguf` for higher accuracy) if you'd
-rather use that.
+shell before relying on one. Chatter auto-detects, in order of preference:
+
+- `nemotron-speech-streaming-en-0.6b-Q8_0.gguf` (from the
+  `nemotron-speech-streaming-en-0.6b-gguf` repo, ~700MB) — the default.
+  Measured both faster *and* substantially more accurate than
+  moonshine-streaming-tiny on a 63s test clip (real-time-factor ~0.07 vs
+  ~0.15–0.28), despite the larger file.
+- `moonshine-streaming-tiny-Q8_0.gguf` (~48MB) — smaller/lighter fallback if
+  you'd rather not download the bigger model.
+
+Point `streaming_model_path` in
+`~/Library/Application Support/Chatter/config.json` at a different streaming
+model if you want to use something else.
 
 ## 4. Run it
 
@@ -93,17 +100,32 @@ isn't a signed/frozen app — see "Known limitations" below):
    (or Terminal, if you're running via `python main.py`), needed to simulate
    the Cmd+V paste.
 2. **System Settings → Privacy & Security → Input Monitoring** — add the same,
-   needed to detect the global Right Option hold.
+   needed to detect the global Right Shift hold.
 3. **System Settings → Privacy & Security → Microphone** — grant when
    prompted, needed to record your voice.
 
-Once granted, hold Right Option anywhere, speak, and release — a status pill
-slides up from the bottom of your screen showing a live partial transcript
-while you talk, and the final (optionally cleaned-up) text pastes wherever
-your cursor is focused. Even without Accessibility granted, the result is
-always copied to the clipboard, so manual Cmd+V works as a fallback. Toggle
-push-to-talk on/off from the menu-bar (tray) icon; closing the main window
-does not quit the app, only "Quit Chatter" from the tray menu does.
+Once granted, hold Right Shift anywhere, speak, and release — a status HUD
+slides up from the bottom-right of your screen showing a live partial
+transcript (last few words) while you talk, and the final (optionally
+cleaned-up) text pastes wherever your cursor is focused. Even without
+Accessibility granted, the result is always copied to the clipboard, so
+manual Cmd+V works as a fallback. Toggle push-to-talk on/off from the
+menu-bar (tray) icon; closing the main window does not quit the app, only
+"Quit Chatter" from the tray menu does.
+
+### Custom dictionary + auto-learning
+
+Chatter keeps a personal dictionary of words the ASR consistently mishears
+(accents, names, jargon) — manage it from the "Custom Dictionary" table in
+the main window, or let Chatter learn automatically: after a push-to-talk
+paste, it watches the field you pasted into (via the same Accessibility
+trust used for paste simulation — nothing else is monitored) for about a
+minute. If you correct exactly one word, it's saved to the dictionary and
+applied to every transcript from then on — both as a direct substitution and
+as a hint to the AI cleanup pass. This is word-level personalization, not
+model retraining: `transcribe.cpp` is inference-only, so the ASR's actual
+recognition of your voice/accent doesn't change, but confirmed corrections
+do get remembered and reapplied.
 
 ## AI cleanup (optional)
 
