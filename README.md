@@ -7,12 +7,13 @@ of whisper.cpp directly. Two ways to use it:
 
 - **File transcription** — open an audio/video file, pick a model, transcribe,
   export `.txt` or `.srt`.
-- **Push-to-talk** — hold **Right Shift** anywhere on your Mac and speak.
+- **Push-to-talk** — hold your chosen key (default **Right Shift**, pick from
+  the "Push-to-talk key" dropdown in the main window — Right/Left Shift,
+  Option, Control, Command, or Caps Lock) anywhere on your Mac and speak.
   Audio is fed to a streaming-capable model *live*, as you talk — not batched
   up and processed after you let go — so release just finalizes the last
   fraction of a second and pastes at your cursor. Wispr-Flow-style, live
-  partial captions included. The key is configurable (`hotkey_keycode` in
-  config.json — see `chatter/native_hotkey.py` for supported keycodes).
+  partial captions included.
 
 File transcription and push-to-talk each keep their own persistent,
 Metal-accelerated `transcribe.cpp` session (loaded once, reused on every call/
