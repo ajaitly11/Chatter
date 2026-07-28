@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon, QMenu
 
 from . import config
 from . import permissions
+from .correction_watcher import CorrectionWatcher
 from .formatter import Formatter
 from .hotkey import PushToTalkController
 from .logging_setup import configure as configure_logging
@@ -74,6 +75,7 @@ def run():
     formatter = Formatter()
     window = MainWindow(formatter)
     overlay = Overlay()
+    correction_watcher = CorrectionWatcher()
 
     def get_streaming_model_path():
         configured = config.load().get("streaming_model_path")
@@ -102,12 +104,19 @@ def run():
     def on_result(text: str, pasted: bool):
         if pasted:
             overlay.flash_and_hide("done", f"Pasted: {_truncate(text)}")
+            correction_watcher.watch_after_paste()
         else:
             overlay.flash_and_hide(
                 "done", f"Copied to clipboard: {_truncate(text)}", delay_ms=3200
             )
 
     hotkey.result_ready.connect(on_result)
+
+    def on_correction_learned(wrong: str, right: str):
+        overlay.flash_and_hide("done", f"Memory updated: “{wrong}” → “{right}”", delay_ms=3200)
+        window._reload_dictionary_table()
+
+    correction_watcher.correction_learned.connect(on_correction_learned)
     hotkey.error.connect(lambda msg: overlay.flash_and_hide("error", _truncate(msg, 60), delay_ms=3200))
     hotkey.error.connect(lambda msg: logger.warning("push-to-talk error: %s", msg))
 
