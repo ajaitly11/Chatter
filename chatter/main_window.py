@@ -1,3 +1,4 @@
+import logging
 import threading
 import traceback
 from pathlib import Path
@@ -34,6 +35,7 @@ from .transcription_service import (
 )
 
 MEDIA_EXTENSIONS = {".mp3", ".wav", ".m4a", ".mp4", ".mov", ".mkv", ".flac", ".aac"}
+logger = logging.getLogger("chatter.main_window")
 
 
 class TranscribeWorker(QThread):
@@ -426,12 +428,24 @@ class MainWindow(QMainWindow):
 
     def export_txt(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save transcript", "transcript.txt", "Text files (*.txt)")
-        if path:
+        if not path:
+            return
+        try:
             Path(path).write_text(self.output.toPlainText(), encoding="utf-8")
+            logger.info("exported .txt to %s", path)
+        except Exception:
+            logger.exception("txt export failed")
+            QMessageBox.critical(self, "Export failed", traceback.format_exc())
 
     def export_srt(self):
         if not self.last_segments:
             return
         path, _ = QFileDialog.getSaveFileName(self, "Save subtitles", "transcript.srt", "SubRip files (*.srt)")
-        if path:
+        if not path:
+            return
+        try:
             Path(path).write_text(segments_to_srt(self.last_segments), encoding="utf-8")
+            logger.info("exported .srt to %s", path)
+        except Exception:
+            logger.exception("srt export failed")
+            QMessageBox.critical(self, "Export failed", traceback.format_exc())

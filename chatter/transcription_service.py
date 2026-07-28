@@ -47,7 +47,9 @@ def segments_to_srt(segments) -> str:
     lines = []
     for i, seg in enumerate(segments, start=1):
         lines.append(str(i))
-        lines.append(f"{format_timestamp(seg.start)} --> {format_timestamp(seg.end)}")
+        start_s = seg.t0_ms / 1000
+        end_s = seg.t1_ms / 1000
+        lines.append(f"{format_timestamp(start_s)} --> {format_timestamp(end_s)}")
         lines.append(seg.text.strip())
         lines.append("")
     return "\n".join(lines)
