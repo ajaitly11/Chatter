@@ -9,6 +9,7 @@ import math
 
 import AppKit
 import objc
+import Quartz
 from PyQt6.QtCore import (
     QEasingCurve,
     QPoint,
@@ -18,10 +19,40 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtProperty,
 )
-from PyQt6.QtGui import QColor, QCursor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QWidget
 
 logger = logging.getLogger("chatter.overlay")
+
+
+def _active_screen_geometry():
+    """Which screen to show the overlay on: wherever the frontmost app's
+    window actually is — not the mouse cursor, which may be resting on a
+    different monitor than the one you're looking at/typing into (confirmed:
+    with Claude.app on the built-in display but the cursor idle on an
+    external monitor, the overlay was appearing on the wrong screen)."""
+    try:
+        workspace = AppKit.NSWorkspace.sharedWorkspace()
+        frontmost = workspace.frontmostApplication()
+        if frontmost is not None:
+            pid = frontmost.processIdentifier()
+            windows = Quartz.CGWindowListCopyWindowInfo(
+                Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID
+            )
+            for w in windows:
+                if w.get("kCGWindowOwnerPID") == pid and w.get("kCGWindowLayer") == 0:
+                    bounds = w.get("kCGWindowBounds")
+                    center = QPoint(
+                        int(bounds["X"] + bounds["Width"] / 2),
+                        int(bounds["Y"] + bounds["Height"] / 2),
+                    )
+                    screen = QApplication.screenAt(center)
+                    if screen:
+                        return screen.geometry()
+                    break
+    except Exception:
+        logger.exception("couldn't determine the active app's screen")
+    return QApplication.primaryScreen().geometry()
 
 # Qt's WindowStaysOnTopHint alone only floats above normal windows on the
 # *current* Space — it does not appear over a different app's fullscreen
@@ -210,8 +241,7 @@ class Overlay(QWidget):
 
     def _target_x_and_ys(self, width: int):
         if self._screen_geometry is None:
-            screen_obj = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
-            self._screen_geometry = screen_obj.geometry()
+            self._screen_geometry = _active_screen_geometry()
         screen = self._screen_geometry
         resting_x = screen.x() + screen.width() - width - RIGHT_MARGIN
         resting_y = screen.y() + screen.height() - HEIGHT - BOTTOM_MARGIN

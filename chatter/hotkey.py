@@ -35,7 +35,7 @@ LIVE_PREVIEW_WORDS = 5  # overlay shows a rolling window, not the whole utteranc
 # back completely empty; even 0.2s of silence fixes it. Padding every
 # release rather than only short ones keeps this simple and the cost is
 # negligible either way.
-TRAILING_SILENCE_SAMPLES = int(SAMPLE_RATE * 0.4)
+TRAILING_SILENCE_SAMPLES = int(SAMPLE_RATE * 1.2)
 _WORD_RE = re.compile(r"[a-z0-9']+")
 
 

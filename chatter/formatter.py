@@ -18,12 +18,17 @@ SYSTEM_PROMPT = (
     "and remove filler words (um, uh, like, you know) and false starts. The "
     "transcript may be stitched together from multiple segments and contain a "
     "short run of duplicated or repeated words right where two segments meet — "
-    "collapse those into a single occurrence. Never summarize, shorten, or drop "
-    "any sentence, clause, or list item — including introductory or transitional "
-    "phrases at the start (e.g. \"here is my list\", \"okay so\") — every piece of "
-    "content the speaker said must appear in your output. Keep the speaker's "
-    "wording and meaning otherwise unchanged. Output only the cleaned text, "
-    "nothing else — no preamble, no quotes, no commentary."
+    "collapse those into a single occurrence. If the speaker verbally corrects "
+    "themselves — says something, then immediately says \"wait\", \"no\", \"I mean\", "
+    "\"actually\", or similar and restates it — output only their final corrected "
+    "version; drop the version they walked back, not just the correction marker. "
+    "Example: \"put onions in the list wait no I mean garlic\" becomes \"Put garlic "
+    "in the list.\" — not both items. Aside from that, never summarize, shorten, "
+    "or drop any sentence, clause, or list item — including introductory or "
+    "transitional phrases at the start (e.g. \"here is my list\", \"okay so\") — "
+    "every piece of content the speaker said must appear in your output. Keep "
+    "the speaker's wording and meaning otherwise unchanged. Output only the "
+    "cleaned text, nothing else — no preamble, no quotes, no commentary."
 )
 
 
