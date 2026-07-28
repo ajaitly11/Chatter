@@ -22,15 +22,37 @@ import Quartz
 
 logger = logging.getLogger("chatter.native_hotkey")
 
-# macOS virtual keycodes for the modifier keys we might bind push-to-talk to.
-RIGHT_OPTION_KEYCODE = 61  # kVK_RightOption
-RIGHT_SHIFT_KEYCODE = 60  # kVK_RightShift
+# macOS virtual keycodes for the modifier keys push-to-talk can bind to, and
+# each one's flagsChanged bit (see RawKeyListener docstring on _callback).
+# (keycode, human-readable label, warning-or-None)
+SUPPORTED_HOTKEYS = [
+    (60, "Right Shift", None),
+    (61, "Right Option (⌥)", None),
+    (62, "Right Control", None),
+    (54, "Right Command (⌘)", None),
+    (56, "Left Shift", None),
+    (58, "Left Option (⌥)", None),
+    (59, "Left Control", None),
+    (55, "Left Command (⌘)", None),
+    (
+        57,
+        "Caps Lock",
+        "Caps Lock also toggles its normal on/off state as a side effect — "
+        "anything you type elsewhere right after may come out capitalized "
+        "unexpectedly.",
+    ),
+]
 
-# Each pure-modifier key fires flagsChanged (never keyDown/keyUp) with its
-# own bit in the event flags telling us whether it just went down or up.
 _FLAG_MASK_BY_KEYCODE = {
-    RIGHT_OPTION_KEYCODE: Quartz.kCGEventFlagMaskAlternate,
-    RIGHT_SHIFT_KEYCODE: Quartz.kCGEventFlagMaskShift,
+    60: Quartz.kCGEventFlagMaskShift,       # Right Shift
+    61: Quartz.kCGEventFlagMaskAlternate,   # Right Option
+    62: Quartz.kCGEventFlagMaskControl,     # Right Control
+    54: Quartz.kCGEventFlagMaskCommand,     # Right Command
+    56: Quartz.kCGEventFlagMaskShift,       # Left Shift
+    58: Quartz.kCGEventFlagMaskAlternate,   # Left Option
+    59: Quartz.kCGEventFlagMaskControl,     # Left Control
+    55: Quartz.kCGEventFlagMaskCommand,     # Left Command
+    57: Quartz.kCGEventFlagMaskAlphaShift,  # Caps Lock
 }
 
 

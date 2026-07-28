@@ -1,3 +1,4 @@
+import threading
 import traceback
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from PyQt6.QtWidgets import (
 
 from . import config
 from . import dictionary
+from .native_hotkey import SUPPORTED_HOTKEYS
 from .transcription_service import (
     decode_to_pcm,
     list_models,
@@ -79,6 +81,8 @@ def _section_title(text: str) -> QLabel:
 
 
 class MainWindow(QMainWindow):
+    hotkey_changed = pyqtSignal()  # push-to-talk key was changed; listener needs a restart
+
     def __init__(self, formatter):
         super().__init__()
         self.setWindowTitle("Chatter")
@@ -153,12 +157,30 @@ class MainWindow(QMainWindow):
         row.addWidget(refresh_btn)
         v.addLayout(row)
 
+        hotkey_row = QHBoxLayout()
+        hotkey_row.addWidget(QLabel("Push-to-talk key:"))
+        self.hotkey_combo = QComboBox()
+        current_keycode = cfg.get("hotkey_keycode", 60)
+        for keycode, label, _warning in SUPPORTED_HOTKEYS:
+            self.hotkey_combo.addItem(label, userData=keycode)
+        idx = self.hotkey_combo.findData(current_keycode)
+        if idx >= 0:
+            self.hotkey_combo.setCurrentIndex(idx)
+        self.hotkey_combo.currentIndexChanged.connect(self._on_hotkey_key_changed)
+        hotkey_row.addWidget(self.hotkey_combo, stretch=1)
+        v.addLayout(hotkey_row)
+
+        self.hotkey_warning_label = QLabel("")
+        self.hotkey_warning_label.setStyleSheet("color: #e0a83c; font-size: 11px;")
+        self.hotkey_warning_label.setWordWrap(True)
+        self.hotkey_warning_label.hide()
+        v.addWidget(self.hotkey_warning_label)
+        self._update_hotkey_warning(current_keycode)
+
         bottom_row = QHBoxLayout()
         self.format_checkbox = QCheckBox("Clean up with AI ✨")
         self.format_checkbox.setChecked(cfg.get("formatting_enabled", True))
-        self.format_checkbox.toggled.connect(
-            lambda checked: config.update(formatting_enabled=checked)
-        )
+        self.format_checkbox.toggled.connect(self._on_formatting_toggled)
         bottom_row.addWidget(self.format_checkbox)
 
         self.hotkey_status_label = QLabel("")
@@ -304,9 +326,32 @@ class MainWindow(QMainWindow):
         if status == "Idle":
             self.hotkey_status_label.setText("")
         else:
-            self.hotkey_status_label.setText(f"⌥ {status}")
+            self.hotkey_status_label.setText(f"⇧ {status}")
 
     # --- actions ---------------------------------------------------
+
+    def _update_hotkey_warning(self, keycode: int):
+        warning = next((w for kc, _l, w in SUPPORTED_HOTKEYS if kc == keycode), None)
+        if warning:
+            self.hotkey_warning_label.setText(f"⚠ {warning}")
+            self.hotkey_warning_label.show()
+        else:
+            self.hotkey_warning_label.hide()
+
+    def _on_hotkey_key_changed(self, _index: int):
+        keycode = self.hotkey_combo.currentData()
+        config.update(hotkey_keycode=keycode)
+        self._update_hotkey_warning(keycode)
+        self.hotkey_changed.emit()
+
+    def _on_formatting_toggled(self, checked: bool):
+        config.update(formatting_enabled=checked)
+        if checked:
+            # Without this, the *first* real use after flipping the toggle
+            # mid-session pays the full ~5-10s llama-server cold-start cost
+            # — warm_up() at launch only covers formatting already being on
+            # when the app started.
+            threading.Thread(target=self.formatter.warm_up, daemon=True).start()
 
     def refresh_models(self):
         self.model_combo.clear()

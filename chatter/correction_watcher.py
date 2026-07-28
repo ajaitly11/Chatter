@@ -19,6 +19,12 @@ logger = logging.getLogger("chatter.correction_watcher")
 POLL_INTERVAL_MS = 1000
 QUIET_POLLS_BEFORE_SETTLED = 2  # ~2s of no further edits before treating a change as "final"
 WATCH_DURATION_MS = 60_000
+# Below this character-similarity ratio, a word swap reads as a stylistic
+# preference (e.g. "good" -> "great") rather than the ASR mishearing a
+# similar-sounding word (e.g. "clawed" -> "Claude") — not something the
+# dictionary should learn, since it'd start replacing every future "good"
+# with "great" regardless of what was actually said.
+MIN_SIMILARITY_RATIO = 0.4
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
 
 
@@ -53,7 +59,17 @@ def _single_word_correction(old_text: str, new_text: str):
     if i2 - i1 != 1 or j2 - j1 != 1:
         return None
     wrong, right = old_words[i1], new_words[j1]
-    return (wrong, right) if wrong.lower() != right.lower() else None
+    if wrong.lower() == right.lower():
+        return None
+
+    similarity = difflib.SequenceMatcher(None, wrong.lower(), right.lower()).ratio()
+    if similarity < MIN_SIMILARITY_RATIO:
+        logger.info(
+            "skipped %r -> %r: not similar enough (%.2f) to look like a "
+            "mishearing rather than a stylistic edit", wrong, right, similarity,
+        )
+        return None
+    return wrong, right
 
 
 class CorrectionWatcher(QObject):

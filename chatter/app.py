@@ -90,6 +90,13 @@ def run():
     hotkey.status_changed.connect(window._on_hotkey_status)
     hotkey.live_text_changed.connect(lambda text: overlay.update_live_text(_truncate_head(text, 80)))
 
+    def restart_hotkey_listener():
+        if config.load().get("push_to_talk_enabled", True):
+            hotkey.stop()
+            hotkey.start()
+
+    window.hotkey_changed.connect(restart_hotkey_listener)
+
     _WORKING_STATES = {"Transcribing…", "Cleaning up…", "Still finishing up…"}
 
     def on_status(status: str):

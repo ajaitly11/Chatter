@@ -15,6 +15,7 @@ import re
 import threading
 import traceback
 
+import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from . import config
@@ -29,6 +30,12 @@ logger = logging.getLogger("chatter.hotkey")
 
 SEGMENT_SAMPLES = SAMPLE_RATE * 10  # reopen the stream every ~10s of audio
 LIVE_PREVIEW_WORDS = 5  # overlay shows a rolling window, not the whole utterance
+# Nemotron (and likely other streaming models) needs a little trailing audio
+# to commit an utterance at all — a bare word with nothing after it comes
+# back completely empty; even 0.2s of silence fixes it. Padding every
+# release rather than only short ones keeps this simple and the cost is
+# negligible either way.
+TRAILING_SILENCE_SAMPLES = int(SAMPLE_RATE * 0.4)
 _WORD_RE = re.compile(r"[a-z0-9']+")
 
 
@@ -169,8 +176,10 @@ class PushToTalkController(QObject):
         self._current_stream = streaming_service.open_stream(self._model_path, self._backend)
         self._segment_samples = 0
 
-    def _finalize_current_stream(self) -> str:
+    def _finalize_current_stream(self, pad_silence: bool = False) -> str:
         stream = self._current_stream
+        if pad_silence:
+            stream.feed(np.zeros(TRAILING_SILENCE_SAMPLES, dtype=np.float32))
         stream.finalize()
         # `full` is the raw model hypothesis and, empirically, the reliable
         # one here — after finalize() `tentative` gets wiped to empty while
@@ -202,7 +211,7 @@ class PushToTalkController(QObject):
                 # roughly one segment's worth of processing time.
                 self._feeder_thread.join()
 
-            final_segment = self._finalize_current_stream()
+            final_segment = self._finalize_current_stream(pad_silence=True)
             if final_segment:
                 self._segments.append(final_segment)
             text = _join_segments(self._segments)

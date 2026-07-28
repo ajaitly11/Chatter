@@ -4,8 +4,11 @@ caption of what's being transcribed, and a checkmark/warning glyph when
 done. Never steals focus from whatever you're typing into.
 """
 
+import logging
 import math
 
+import AppKit
+import objc
 from PyQt6.QtCore import (
     QEasingCurve,
     QPoint,
@@ -17,6 +20,29 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QColor, QCursor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen
 from PyQt6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QWidget
+
+logger = logging.getLogger("chatter.overlay")
+
+# Qt's WindowStaysOnTopHint alone only floats above normal windows on the
+# *current* Space — it does not appear over a different app's fullscreen
+# Space or a different virtual desktop. That needs the underlying NSWindow's
+# collectionBehavior/level set directly; Qt has no portable API for this.
+_NATIVE_COLLECTION_BEHAVIOR = (
+    AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
+    | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
+    | AppKit.NSWindowCollectionBehaviorStationary
+    | AppKit.NSWindowCollectionBehaviorIgnoresCycle
+)
+
+
+def _make_overlay_appear_everywhere(widget):
+    try:
+        ns_view = objc.objc_object(c_void_p=int(widget.winId()))
+        ns_window = ns_view.window()
+        ns_window.setCollectionBehavior_(_NATIVE_COLLECTION_BEHAVIOR)
+        ns_window.setLevel_(AppKit.NSPopUpMenuWindowLevel)
+    except Exception:
+        logger.exception("couldn't set native window level — overlay may not show over other apps")
 
 HEIGHT = 56
 MIN_WIDTH = 190
@@ -103,6 +129,7 @@ class Overlay(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.resize(MIN_WIDTH, HEIGHT)
+        _make_overlay_appear_everywhere(self)
         self._opacity = 1.0
 
         shadow = QGraphicsDropShadowEffect(self)
