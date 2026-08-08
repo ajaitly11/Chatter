@@ -5,25 +5,25 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import QApplication, QMessageBox, QSystemTrayIcon, QMenu
+from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 
 from . import config
 from . import permissions
+from . import phrases
+from . import theme
 from .correction_watcher import CorrectionWatcher
 from .formatter import Formatter
 from .hotkey import PushToTalkController
 from .logging_setup import configure as configure_logging
 from .main_window import MainWindow
+from .onboarding import OnboardingWindow
 from .overlay import Overlay
 from .transcription_service import MODELS_DIR, service
 
-# Preference order for auto-detecting a push-to-talk model when
-# streaming_model_path isn't set in config: nemotron-speech-streaming
-# measured faster *and* more accurate than moonshine-streaming-tiny despite
-# being ~15x the file size (RTF 0.07 vs 0.15-0.28 on the same test clip).
-_STREAMING_MODEL_CANDIDATES = [
-    MODELS_DIR / "nemotron-speech-streaming-en-0.6b-Q8_0.gguf",
-    MODELS_DIR / "moonshine-streaming-tiny-Q8_0.gguf",
+# Push-to-talk transcribes with one of these (see hotkey.py) — Whisper
+# first, since the user would rather wait than get a less accurate result.
+_BATCH_MODEL_CANDIDATES = [
+    MODELS_DIR / "whisper-large-v3-turbo-Q8_0.gguf",
 ]
 
 STYLE_PATH = Path(__file__).parent / "style.qss"
@@ -36,7 +36,7 @@ def _make_icon() -> QIcon:
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(QColor("#5b8dee"))
+    painter.setBrush(QColor(theme.ACTIVE))
     painter.setPen(Qt.PenStyle.NoPen)
     painter.drawRoundedRect(4, 4, size - 8, size - 8, 16, 16)
     painter.setPen(QColor("white"))
@@ -52,13 +52,6 @@ def _make_icon() -> QIcon:
 def _truncate(text: str, n: int = 46) -> str:
     text = text.replace("\n", " ").strip()
     return text if len(text) <= n else text[: n - 1] + "…"
-
-
-def _truncate_head(text: str, n: int = 80) -> str:
-    """Keeps the *tail* of the text — for live captions, the most recent
-    words are the relevant ones, not the start of a long utterance."""
-    text = text.replace("\n", " ").strip()
-    return text if len(text) <= n else "…" + text[-(n - 1):]
 
 
 def run():
@@ -77,18 +70,17 @@ def run():
     overlay = Overlay()
     correction_watcher = CorrectionWatcher()
 
-    def get_streaming_model_path():
-        configured = config.load().get("streaming_model_path")
+    def get_batch_model_path():
+        configured = config.load().get("whisper_model_path")
         if configured:
             return configured
-        for candidate in _STREAMING_MODEL_CANDIDATES:
+        for candidate in _BATCH_MODEL_CANDIDATES:
             if candidate.exists():
                 return str(candidate)
         return None
 
-    hotkey = PushToTalkController(get_streaming_model_path, formatter)
+    hotkey = PushToTalkController(get_batch_model_path, formatter)
     hotkey.status_changed.connect(window._on_hotkey_status)
-    hotkey.live_text_changed.connect(lambda text: overlay.update_live_text(_truncate_head(text, 80)))
 
     def restart_hotkey_listener():
         if config.load().get("push_to_talk_enabled", True):
@@ -97,34 +89,49 @@ def run():
 
     window.hotkey_changed.connect(restart_hotkey_listener)
 
-    _WORKING_STATES = {"Transcribing…", "Cleaning up…", "Still finishing up…"}
+    _PROCESSING_STATES = {"Transcribing…", "Cleaning up…", "Still finishing up…"}
 
     def on_status(status: str):
+        # No system notifications anywhere in this flow, by explicit
+        # request: a notification banner is fixed by macOS to the top-right
+        # corner and auto-dismisses after a few seconds, so it can neither
+        # sit at the notch nor persist for the length of a long hold. The
+        # HUD (already fixed to sit above other apps' windows, including
+        # fullscreen ones — see overlay.py) is the only feedback surface for
+        # the whole press/hold/release cycle now.
+        # Picked once and passed to both surfaces — each used to call
+        # phrases.pick() independently, so the HUD and the Live Dictation
+        # tab could (and did) show two different rotated phrases at once.
+        # The HUD gets a short, rotated, vibe-y phrase (phrases.pick); the
+        # Live Dictation tab gets the literal status text instead — it's
+        # the bigger, primary surface, so it should say plainly what's
+        # happening ("Transcribing…", "Cleaning up…") rather than cycle
+        # through cute flavor text that isn't always obvious.
         if status == "Listening…":
-            overlay.show_state("listening", status)
-        elif status in _WORKING_STATES:
-            overlay.show_state("working", status)
+            overlay.show_state("listening", phrase=phrases.pick("listening"))
+            window.set_live_state("listening", label=status)
+        elif status in _PROCESSING_STATES:
+            overlay.show_state("processing", phrase=phrases.pick("processing"))
+            window.set_live_state("processing", label=status)
         # "Idle" is handled by result_ready/error, which own the final message + hide.
 
     hotkey.status_changed.connect(on_status)
 
     def on_result(text: str, pasted: bool):
+        overlay.flash_and_hide("done", phrase=phrases.pick("done"))
+        window.set_live_state("done", label="Done!")
+        window._reload_dictation_history()
         if pasted:
-            overlay.flash_and_hide("done", f"Pasted: {_truncate(text)}")
             correction_watcher.watch_after_paste()
-        else:
-            overlay.flash_and_hide(
-                "done", f"Copied to clipboard: {_truncate(text)}", delay_ms=3200
-            )
 
     hotkey.result_ready.connect(on_result)
 
     def on_correction_learned(wrong: str, right: str):
-        overlay.flash_and_hide("done", f"Memory updated: “{wrong}” → “{right}”", delay_ms=3200)
         window._reload_dictionary_table()
 
     correction_watcher.correction_learned.connect(on_correction_learned)
     hotkey.error.connect(lambda msg: overlay.flash_and_hide("error", _truncate(msg, 60), delay_ms=3200))
+    hotkey.error.connect(lambda msg: window.set_live_state("error", label=_truncate(msg, 60)))
     hotkey.error.connect(lambda msg: logger.warning("push-to-talk error: %s", msg))
 
     tray = QSystemTrayIcon(icon)
@@ -167,23 +174,13 @@ def run():
 
     # Accessibility trust is tied to *this* launching bundle's identity
     # (Chatter.app vs. a bare `python main.py` run from Terminal each get
-    # their own entry) — actively request it so macOS shows the real
-    # permission prompt and lists this app in System Settings, instead of
-    # auto-paste silently doing nothing.
-    if not permissions.is_trusted():
-        logger.warning("Accessibility not trusted — requesting")
-        permissions.request_trust()
-        QMessageBox.information(
-            window,
-            "Permission needed for auto-paste",
-            "Chatter needs Accessibility permission to auto-paste push-to-talk "
-            "transcripts at your cursor.\n\n"
-            "macOS should now show a permission prompt (or Chatter will appear "
-            "in System Settings > Privacy & Security > Accessibility) — enable "
-            "it there, then try push-to-talk again.\n\n"
-            "Until then, transcripts are still copied to your clipboard, so "
-            "Cmd+V works manually.",
-        )
+    # their own entry) — the onboarding flow's second step actively
+    # requests it so macOS shows the real permission prompt and lists this
+    # app in System Settings, instead of auto-paste silently doing nothing.
+    if not cfg.get("onboarding_complete", False):
+        OnboardingWindow(window).exec()
+        config.update(onboarding_complete=True)
+        cfg = config.load()
 
     if cfg.get("push_to_talk_enabled", True):
         hotkey.start()

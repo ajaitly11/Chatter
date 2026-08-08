@@ -3,9 +3,12 @@ expects, delivered as a stream of small chunks so push-to-talk can feed a
 streaming model in near-real-time instead of waiting for the whole recording.
 """
 
+import logging
 import queue
 
 import sounddevice as sd
+
+logger = logging.getLogger("chatter.audio_capture")
 
 SAMPLE_RATE = 16000
 # Larger chunks amortize per-feed()-call overhead much better — measured
@@ -29,6 +32,15 @@ class StreamingMicRecorder:
             callback=self._on_audio,
         )
         self._stream.start()
+        # Cheap diagnostic for the "recording was marked as silence but I was
+        # definitely talking" case — if the device it actually opened isn't
+        # the one you'd expect (e.g. a stale/virtual device after a rapid
+        # start/stop cycle), this is the first thing to check in the log.
+        try:
+            dev = sd.query_devices(self._stream.device)
+            logger.info("mic stream opened: device=%r samplerate=%s", dev.get("name"), self._stream.samplerate)
+        except Exception:
+            logger.exception("couldn't query opened input device name")
 
     def _on_audio(self, indata, frames, time_info, status):
         self._queue.put(indata[:, 0].copy())

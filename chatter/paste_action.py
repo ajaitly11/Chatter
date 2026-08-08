@@ -1,12 +1,15 @@
-"""Put text on the clipboard and, if Accessibility is trusted, simulate
-Cmd+V to insert it at the cursor in whatever app is currently focused.
-Clipboard is always set first, so manual Cmd+V works even without trust.
+"""Insert text at the cursor in whatever app is currently focused, by typing
+it directly via simulated keystrokes. Deliberately never touches the system
+clipboard — the user routinely has something else on it (a link, etc.) they
+mean to paste right after dictating, and clobbering that was the whole
+complaint. The only time the clipboard is used is the fallback below, when
+Accessibility isn't trusted yet and simulated keystrokes aren't possible at
+all — that's still better than losing the transcript outright.
 """
 
 import subprocess
-import time
 
-from pynput.keyboard import Controller, Key
+from pynput.keyboard import Controller
 
 from . import permissions
 
@@ -19,17 +22,15 @@ def _set_clipboard(text: str):
 
 
 def paste(text: str) -> bool:
-    """Returns True if the auto-paste keystroke was sent, False if only the
-    clipboard was set (e.g. Accessibility not yet trusted)."""
+    """Returns True if the text was typed at the cursor, False if it was only
+    copied to the clipboard (Accessibility not yet trusted, so simulated
+    keystrokes aren't available either)."""
     if not text:
         return False
-    _set_clipboard(text)
 
     if not permissions.is_trusted():
+        _set_clipboard(text)
         return False
 
-    time.sleep(0.05)  # let the clipboard settle before the paste keystroke fires
-    with _controller.pressed(Key.cmd):
-        _controller.press("v")
-        _controller.release("v")
+    _controller.type(text)
     return True

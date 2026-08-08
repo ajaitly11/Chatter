@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 MODELS_DIR = Path(__file__).parent.parent / "models"
+CLEANUP_MODELS_DIR = MODELS_DIR / "cleanup"
 
 
 def list_models() -> list[Path]:
@@ -43,14 +44,23 @@ def format_timestamp(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def segments_to_srt(segments) -> str:
+def _field(w, name: str):
+    """Words come either as live transcribe_cpp.Word objects (fresh
+    transcription) or as plain dicts (re-loaded from history.py's JSONL
+    log, which can't store native Word objects) — this reads either."""
+    return w[name] if isinstance(w, dict) else getattr(w, name)
+
+
+def words_to_srt(words) -> str:
+    """One SRT cue per word, using transcribe.cpp's per-word timestamps
+    (Result.words) rather than per-segment/phrase timestamps."""
     lines = []
-    for i, seg in enumerate(segments, start=1):
+    for i, w in enumerate(words, start=1):
         lines.append(str(i))
-        start_s = seg.t0_ms / 1000
-        end_s = seg.t1_ms / 1000
+        start_s = _field(w, "t0_ms") / 1000
+        end_s = _field(w, "t1_ms") / 1000
         lines.append(f"{format_timestamp(start_s)} --> {format_timestamp(end_s)}")
-        lines.append(seg.text.strip())
+        lines.append(_field(w, "text").strip())
         lines.append("")
     return "\n".join(lines)
 
@@ -82,21 +92,10 @@ class TranscriptionService:
         self._model_path = model_path
         self._backend = backend
 
-    def transcribe(self, pcm: np.ndarray, model_path: str, backend: str):
+    def transcribe(self, pcm: np.ndarray, model_path: str, backend: str, **run_kwargs):
         with self._lock:
             self._ensure_session(model_path, backend)
-            return self._session.run(pcm)
-
-    def open_stream(self, model_path: str, backend: str):
-        """Returns a live Stream for incremental feed()/text()/finalize() calls.
-        Only the lock-guarded session setup happens here — feed() calls happen
-        outside the lock over the recording's lifetime, so this is meant for a
-        single dedicated-purpose service instance (see `streaming_service`
-        below), not one shared with concurrent batch transcribe() calls.
-        """
-        with self._lock:
-            self._ensure_session(model_path, backend)
-            return self._session.stream()
+            return self._session.run(pcm, **run_kwargs)
 
     def close(self):
         if self._session is not None:
@@ -110,6 +109,3 @@ class TranscriptionService:
 
 
 service = TranscriptionService()
-# Separate persistent Model+Session dedicated to push-to-talk streaming, since
-# it typically uses a different (streaming-capable) model than file transcription.
-streaming_service = TranscriptionService()

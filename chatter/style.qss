@@ -1,15 +1,19 @@
+/* Warm Terracotta — converted from the Claude Design mockup's OKLCH palette
+   (chatter/theme.py has the same values as Python constants/QColors for
+   widgets that paint themselves, e.g. mascot.py, overlay.py). */
+
 QWidget {
-    background-color: #1e1f22;
-    color: #e8e8ea;
+    background-color: #2a1b16;
+    color: #f5ede7;
     font-size: 13px;
 }
 
 QMainWindow {
-    background-color: #1e1f22;
+    background-color: #2a1b16;
 }
 
 QLabel#sectionTitle {
-    color: #9a9ba1;
+    color: #b9aaa3;
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.5px;
@@ -17,55 +21,77 @@ QLabel#sectionTitle {
 }
 
 QFrame#card {
-    background-color: #27282c;
+    background-color: #3b2922;
     border-radius: 10px;
-    border: 1px solid #35363b;
+    border: 1px solid rgba(154, 128, 119, 0.3);
+}
+
+QTabWidget::pane {
+    border-top: 1px solid rgba(154, 128, 119, 0.3);
+    background-color: #2a1b16;
+}
+
+QTabBar::tab {
+    background: transparent;
+    color: #b9aaa3;
+    font-weight: 600;
+    padding: 10px 14px;
+    margin: 0 2px;
+}
+
+QTabBar::tab:selected {
+    color: #f5ede7;
+}
+
+QTabBar::tab:hover:!selected {
+    color: #f5ede7;
 }
 
 QPushButton {
-    background-color: #34363b;
-    border: 1px solid #45464c;
+    background-color: #49352e;
+    border: 1px solid rgba(154, 128, 119, 0.3);
     border-radius: 8px;
     padding: 8px 16px;
-    color: #e8e8ea;
+    color: #f5ede7;
 }
 
 QPushButton:hover {
-    background-color: #3c3e44;
+    background-color: #543f37;
 }
 
 QPushButton:pressed {
-    background-color: #2c2d31;
+    background-color: #3b2922;
 }
 
 QPushButton:disabled {
-    color: #6a6b70;
-    background-color: #2a2b2e;
+    color: #7d6d66;
+    background-color: #3b2922;
 }
 
 QPushButton#primary {
-    background-color: #5b8dee;
-    border: 1px solid #5b8dee;
-    color: white;
-    font-weight: 600;
+    background-color: #eb7c33;
+    border: 1px solid #eb7c33;
+    color: #2a1b16;
+    font-weight: 700;
 }
 
 QPushButton#primary:hover {
-    background-color: #6f9bf1;
+    background-color: #f08f4f;
 }
 
 QPushButton#primary:disabled {
-    background-color: #3a4257;
-    border-color: #3a4257;
-    color: #7d879e;
+    background-color: #5c4a3f;
+    border-color: #5c4a3f;
+    color: #8c7b73;
 }
 
 QComboBox, QTextEdit, QLineEdit, QTableWidget {
-    background-color: #2a2b2e;
-    border: 1px solid #3d3e43;
+    background-color: #3b2922;
+    border: 1px solid rgba(154, 128, 119, 0.3);
     border-radius: 8px;
     padding: 6px 10px;
-    selection-background-color: #5b8dee;
+    selection-background-color: #eb7c33;
+    selection-color: #2a1b16;
 }
 
 QTextEdit {
@@ -79,7 +105,7 @@ QComboBox::drop-down {
 
 QTableWidget {
     padding: 2px;
-    gridline-color: #3d3e43;
+    gridline-color: rgba(154, 128, 119, 0.3);
 }
 
 QTableWidget::item {
@@ -87,23 +113,23 @@ QTableWidget::item {
 }
 
 QHeaderView::section {
-    background-color: #2a2b2e;
-    color: #9a9ba1;
+    background-color: #3b2922;
+    color: #b9aaa3;
     border: none;
-    border-bottom: 1px solid #3d3e43;
+    border-bottom: 1px solid rgba(154, 128, 119, 0.3);
     padding: 4px 6px;
     font-size: 11px;
 }
 
 QProgressBar {
-    background-color: #2a2b2e;
+    background-color: #3b2922;
     border: none;
     border-radius: 4px;
     height: 6px;
 }
 
 QProgressBar::chunk {
-    background-color: #5b8dee;
+    background-color: #eb7c33;
     border-radius: 4px;
 }
 
@@ -112,16 +138,41 @@ QCheckBox {
 }
 
 QLabel#dropZone {
-    border: 2px dashed #45464c;
+    border: 2px dashed rgba(154, 128, 119, 0.3);
     border-radius: 10px;
-    color: #9a9ba1;
+    color: #b9aaa3;
     padding: 18px;
 }
 
 QLabel#dropZoneActive {
-    border: 2px dashed #5b8dee;
+    border: 2px dashed #eb7c33;
     border-radius: 10px;
-    color: #5b8dee;
+    color: #eb7c33;
     padding: 18px;
-    background-color: rgba(91, 141, 238, 0.08);
+    background-color: rgba(235, 124, 51, 0.08);
+}
+
+QScrollArea {
+    background: transparent;
+    border: none;
+}
+
+QScrollBar:vertical {
+    background: transparent;
+    width: 10px;
+    margin: 0;
+}
+
+QScrollBar::handle:vertical {
+    background: rgba(154, 128, 119, 0.4);
+    border-radius: 5px;
+    min-height: 24px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: rgba(154, 128, 119, 0.6);
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
 }

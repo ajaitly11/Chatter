@@ -16,16 +16,15 @@ DEFAULTS = {
     # macOS virtual keycode for the push-to-talk hold key. Defaults to Right
     # Shift (60); see chatter/native_hotkey.py for other supported keycodes.
     "hotkey_keycode": 60,
-    # Push-to-talk uses a dedicated streaming-capable model (session.stream()),
-    # separate from the batch model used for file transcription — most ASR
-    # architectures (including default Whisper/Parakeet) don't support
-    # incremental streaming in transcribe.cpp; this must point at one that
-    # reports capabilities.supports_streaming == True (e.g. a moonshine-streaming
-    # or nemotron-speech-streaming GGUF).
-    "streaming_model_path": "",
+    # Push-to-talk transcribes with this model — accuracy over speed.
+    # Defaults to whisper-large-v3-turbo if present in ./models.
+    "whisper_model_path": "",
     # Personal corrections for words the ASR model consistently mishears
     # (accents, names, jargon) — {"mis-heard term": "correct term"}.
     "custom_dictionary": {},
+    # Whether the first-run permission flow (chatter/onboarding.py) has
+    # already been shown.
+    "onboarding_complete": False,
 }
 
 

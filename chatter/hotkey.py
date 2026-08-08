@@ -1,100 +1,114 @@
 """Global push-to-talk: hold the configured key (default Right Shift) to
-record. Audio is fed to a
-streaming-capable model live (as you speak, not after you release) via
-transcribe.cpp's Stream API. Per-chunk cost grows with how much audio a
-stream has accumulated, so long holds periodically finalize and reopen a
-fresh stream (a new "segment") to keep processing bounded — segment texts
-are joined together for the final result. Release finalizes the last
-segment, optionally cleans up with the local formatter, and pastes at the
-cursor. The feeder thread is always drained in full before finalizing —
-never abandoned on a timeout — so no audio is silently dropped.
+record, release to transcribe with the batch model (Whisper by default) and
+paste at the cursor.
+
+Deliberately single-pass. An earlier version also streamed the recording
+live through a second, streaming-capable model (Nemotron) to drive a
+word-by-word live caption. That doubled GPU load for the entire time the key
+was held and added visible lag before the pasted text arrived, in service of
+a live caption that wasn't even what got pasted — the accurate output always
+came from a second, separate Whisper pass on release regardless. Recording
+is now just buffered raw audio; on release, the whole clip is decoded once,
+after a short trailing grace period so the last syllable isn't clipped by
+the mic stream closing right on key-up.
 """
 
 import logging
-import re
 import threading
 import traceback
+from pathlib import Path
 
 import numpy as np
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from . import config
 from . import dictionary
+from . import history
 from . import paste_action
 from . import sound
 from .audio_capture import SAMPLE_RATE, StreamingMicRecorder
 from .native_hotkey import RawKeyListener
-from .transcription_service import streaming_service
+from .transcription_service import service
 
 logger = logging.getLogger("chatter.hotkey")
 
-SEGMENT_SAMPLES = SAMPLE_RATE * 10  # reopen the stream every ~10s of audio
-LIVE_PREVIEW_WORDS = 5  # overlay shows a rolling window, not the whole utterance
-# Nemotron (and likely other streaming models) needs a little trailing audio
-# to commit an utterance at all — a bare word with nothing after it comes
-# back completely empty; even 0.2s of silence fixes it. Padding every
-# release rather than only short ones keeps this simple and the cost is
-# negligible either way.
-TRAILING_SILENCE_SAMPLES = int(SAMPLE_RATE * 1.2)
-_WORD_RE = re.compile(r"[a-z0-9']+")
+# Releasing the hold key lands right on top of (or a beat before) the last
+# syllable, and closing the mic stream immediately on key-up doesn't leave
+# the audio driver any room to hand over that last bit of audio — so the
+# recording keeps running for a short grace period after key-up before the
+# stream actually closes.
+RELEASE_GRACE_SECONDS = 0.4
+
+# Frames quieter than this (RMS) are treated as silence, both for trimming
+# the clip's edges and for deciding whether anything was said at all.
+_SILENCE_RMS_THRESHOLD = 0.012
+_SILENCE_FRAME_MS = 30
+_SILENCE_MARGIN_MS = 200
 
 
-def _last_n_words(text: str, n: int) -> str:
-    words = text.split()
-    return " ".join(words[-n:]) if len(words) > n else text
+def _trim_silence(pcm: np.ndarray, sample_rate: int) -> np.ndarray | None:
+    """Chops leading/trailing near-silence off the recorded clip, and
+    returns None if the *entire* clip is silence.
 
-
-def _join_segments(segments: list[str], max_overlap_words: int = 8) -> str:
-    """Joins segment texts, trimming an exact duplicated run of words where
-    one segment repeats the tail of the previous one — a byproduct of
-    finalizing/reopening the stream mid-utterance. Only catches exact
-    (case/punctuation-insensitive) repeats; anything fuzzier is left for the
-    AI cleanup pass, which can catch it semantically.
+    Whisper is trained on YouTube captions and has a well-documented
+    tendency to hallucinate a confident, generic sign-off phrase ("Thank
+    you.", "Thanks for watching!") when fed silence — it does not reliably
+    self-report "no speech" the way its own no-speech threshold implies.
+    Deciding that upfront from simple audio energy, rather than trusting
+    Whisper's output for a clip we already know was silent, is what
+    actually stops an empty press from pasting hallucinated text.
     """
-    if not segments:
-        return ""
-    joined = segments[0].strip()
-    for seg in segments[1:]:
-        prev_words = _WORD_RE.findall(joined.lower())
-        seg_words_raw = seg.split()
-        seg_words_norm = _WORD_RE.findall(seg.lower())
-        limit = min(max_overlap_words, len(prev_words), len(seg_words_norm))
-        trimmed = seg
-        for k in range(limit, 0, -1):
-            if prev_words[-k:] == seg_words_norm[:k]:
-                trimmed = " ".join(seg_words_raw[k:])
-                break
-        joined = f"{joined.strip()} {trimmed.strip()}".strip()
-    return joined
+    if pcm.size == 0:
+        logger.warning("silence check: recording was empty (0 samples captured)")
+        return None
+    frame_len = max(1, int(sample_rate * _SILENCE_FRAME_MS / 1000))
+    n_frames = len(pcm) // frame_len
+    if n_frames == 0:
+        return None
+    frames = pcm[: n_frames * frame_len].reshape(n_frames, frame_len)
+    rms = np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1))
+    peak_rms = float(rms.max())
+    loud = np.flatnonzero(rms >= _SILENCE_RMS_THRESHOLD)
+    if loud.size == 0:
+        # Logged at WARNING (not the usual INFO) whenever the discarded
+        # clip was long enough to plausibly contain real speech — a quick
+        # tap that's genuinely silent is expected and not worth flagging,
+        # but a multi-second hold failing this check is exactly the "I was
+        # talking and it said no speech" symptom, and peak_rms tells you
+        # whether the mic captured near-total silence (real no-speech, or a
+        # stale/disconnected input device — see audio_capture.py's device
+        # log line right before this) or just fell short of the threshold.
+        log = logger.warning if len(pcm) / sample_rate > 2.0 else logger.info
+        log("silence check: peak_rms=%.5f threshold=%.5f over %.2fs — treating as silence",
+            peak_rms, _SILENCE_RMS_THRESHOLD, len(pcm) / sample_rate)
+        return None
+    margin_frames = max(1, int(_SILENCE_MARGIN_MS / _SILENCE_FRAME_MS))
+    start = max(0, (loud[0] - margin_frames) * frame_len)
+    end = min(len(pcm), (loud[-1] + margin_frames + 1) * frame_len)
+    return pcm[start:end]
 
 
 class PushToTalkController(QObject):
     status_changed = pyqtSignal(str)
-    live_text_changed = pyqtSignal(str)
     result_ready = pyqtSignal(str, bool)  # (text, was_auto_pasted)
     error = pyqtSignal(str)
 
-    def __init__(self, get_streaming_model_path, formatter):
+    def __init__(self, get_batch_model_path, formatter):
         super().__init__()
-        self._get_streaming_model_path = get_streaming_model_path
+        self._get_batch_model_path = get_batch_model_path
         self._formatter = formatter
         self._recorder = StreamingMicRecorder()
         self._recording = False
-        # True from the moment a hold is released until _finish() (which
-        # touches self._segments / self._current_stream, possibly for
-        # several seconds during AI formatting) is fully done. Without this,
-        # a quick re-press mid-formatting could reset that shared state out
-        # from under the still-running _finish() call — surfaced as AI
-        # cleanup only ever returning the most recent short utterance.
+        # True from the moment a hold is released until _finish() (which can
+        # run for several seconds during transcription/AI formatting) is
+        # fully done. Without this, a quick re-press mid-processing could
+        # reset shared state out from under the still-running _finish() call.
         self._processing = False
         self._listener = None
 
-        self._model_path = None
         self._backend = None
-        self._current_stream = None
-        self._segment_samples = 0
-        self._segments: list[str] = []
-        self._feeder_thread = None
+        self._raw_chunks: list[np.ndarray] = []
+        self._collector_thread = None
 
     def start(self):
         keycode = config.load().get("hotkey_keycode", 60)
@@ -116,107 +130,75 @@ class PushToTalkController(QObject):
             self.status_changed.emit("Still finishing up…")
             return
 
-        model_path = self._get_streaming_model_path()
-        if not model_path:
-            self.error.emit(
-                "No streaming model configured — set streaming_model_path in "
-                "Chatter's config.json to a model with supports_streaming=True."
-            )
-            return
-
-        cfg = config.load()
-        try:
-            self._model_path = model_path
-            self._backend = cfg["backend"]
-            self._current_stream = streaming_service.open_stream(model_path, self._backend)
-        except Exception:
-            logger.exception("failed to open stream")
-            self.error.emit("Couldn't start the streaming model — see chatter.log.")
-            self._current_stream = None
-            return
-
-        self._segments = []
-        self._segment_samples = 0
+        self._backend = config.load()["backend"]
+        self._raw_chunks = []
         self._recording = True
         self._recorder.start()
         sound.play_start()
-        logger.info("recording started (streaming)")
+        logger.info("recording started")
         self.status_changed.emit("Listening…")
-        self._feeder_thread = threading.Thread(target=self._feed_loop, daemon=True)
-        self._feeder_thread.start()
+        self._collector_thread = threading.Thread(target=self._collect_loop, daemon=True)
+        self._collector_thread.start()
 
-    def _live_preview(self, current_text: str) -> str:
-        full = _join_segments([*self._segments, current_text])
-        return _last_n_words(full, LIVE_PREVIEW_WORDS)
-
-    def _feed_loop(self):
+    def _collect_loop(self):
         try:
             for chunk in self._recorder.chunks():
-                update = self._current_stream.feed(chunk)
-                self._segment_samples += len(chunk)
-
-                if update.result_changed:
-                    current = self._current_stream.text().full.strip()
-                    live = self._live_preview(current)
-                    if live:
-                        self.live_text_changed.emit(live)
-
-                if self._segment_samples >= SEGMENT_SAMPLES:
-                    self._roll_over_segment()
+                self._raw_chunks.append(chunk)
         except Exception:
-            logger.exception("stream feed loop failed")
-
-    def _roll_over_segment(self):
-        """Finalizes the current stream and opens a fresh one, so a long
-        hold doesn't keep growing one stream's context indefinitely."""
-        text = self._finalize_current_stream()
-        if text:
-            self._segments.append(text)
-        logger.info("segment rolled over: %r (%d total)", text, len(self._segments))
-        self._current_stream = streaming_service.open_stream(self._model_path, self._backend)
-        self._segment_samples = 0
-
-    def _finalize_current_stream(self, pad_silence: bool = False) -> str:
-        stream = self._current_stream
-        if pad_silence:
-            stream.feed(np.zeros(TRAILING_SILENCE_SAMPLES, dtype=np.float32))
-        stream.finalize()
-        # `full` is the raw model hypothesis and, empirically, the reliable
-        # one here — after finalize() `tentative` gets wiped to empty while
-        # `committed` can be left stuck on stale text, so `committed +
-        # tentative` silently drops real content that only survives in `full`.
-        text = stream.text().full.strip()
-        try:
-            stream.reset()
-        except Exception:
-            pass
-        return text
+            logger.exception("audio collection loop failed")
 
     def _on_release(self):
         if not self._recording:
             return
         self._recording = False
         self._processing = True
-        self._recorder.stop()  # queues a sentinel; feed loop drains and exits
         sound.play_stop()
-        logger.info("recording stopped")
+        logger.info("recording released — keeping mic open for a %.1fs grace period", RELEASE_GRACE_SECONDS)
         self.status_changed.emit("Transcribing…")
+        # Stop the mic (and thus the collector loop, via the sentinel it
+        # queues) after the grace period rather than immediately, so
+        # _finish's join() below waits for that trailing bit of audio
+        # instead of missing it.
+        threading.Timer(RELEASE_GRACE_SECONDS, self._recorder.stop).start()
         threading.Thread(target=self._finish, daemon=True).start()
+
+    def _transcribe(self, pcm: np.ndarray) -> str:
+        model_path = self._get_batch_model_path()
+        if not model_path:
+            self.error.emit(
+                "No transcription model configured — set whisper_model_path in "
+                "Chatter's config.json."
+            )
+            return ""
+        run_kwargs = {}
+        if "whisper" in Path(model_path).name.lower():
+            import transcribe_cpp
+            # Isolated few-second clips — no reason to condition decoding on
+            # tokens from anything but this clip itself.
+            run_kwargs["family"] = transcribe_cpp.WhisperRunOptions(condition_on_prev_tokens=False)
+        result = service.transcribe(pcm, model_path, self._backend, **run_kwargs)
+        return result.text.strip()
 
     def _finish(self):
         try:
-            if self._feeder_thread is not None:
+            if self._collector_thread is not None:
                 # No timeout: a truncated wait here means silently dropped
-                # audio. Segmenting during _feed_loop keeps this bounded to
-                # roughly one segment's worth of processing time.
-                self._feeder_thread.join()
+                # audio.
+                self._collector_thread.join()
 
-            final_segment = self._finalize_current_stream(pad_silence=True)
-            if final_segment:
-                self._segments.append(final_segment)
-            text = _join_segments(self._segments)
-            logger.info("finalized: %r", text)
+            raw = np.concatenate(self._raw_chunks) if self._raw_chunks else np.array([], dtype=np.float32)
+            trimmed = _trim_silence(raw, SAMPLE_RATE)
+            if trimmed is None:
+                logger.info("recording was silence — skipping transcription")
+                self.error.emit("No speech detected.")
+                return
+            logger.info(
+                "%.2fs raw -> %.2fs after silence trim",
+                len(raw) / SAMPLE_RATE, len(trimmed) / SAMPLE_RATE,
+            )
 
+            text = self._transcribe(trimmed)
+            logger.info("transcribed: %r", text)
             if not text:
                 self.error.emit("No speech detected.")
                 return
@@ -230,13 +212,16 @@ class PushToTalkController(QObject):
 
             pasted = paste_action.paste(text)
             logger.info("paste_action.paste -> auto-pasted=%s", pasted)
+            # Logged regardless of paste success — "even if it doesn't get
+            # pasted" was the explicit ask, so a clipboard-only fallback
+            # still needs to show up in the Live Dictation history.
+            history.append("dictation", text, pasted=pasted)
             self.result_ready.emit(text, pasted)
         except Exception:
             logger.exception("push-to-talk pipeline failed")
             self.error.emit(traceback.format_exc())
         finally:
-            self._current_stream = None
-            self._feeder_thread = None
-            self._segments = []
+            self._raw_chunks = []
+            self._collector_thread = None
             self._processing = False
             self.status_changed.emit("Idle")
