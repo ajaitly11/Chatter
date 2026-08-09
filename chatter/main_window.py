@@ -546,6 +546,77 @@ class _InsightBarChart(QWidget):
             )
 
 
+class _PaceGauge(QWidget):
+    """A compact semicircle that makes speaking pace feel like a signal."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._wpm: int | None = None
+        self.setFixedHeight(78)
+
+    def set_value(self, wpm: int | None):
+        self._wpm = wpm
+        self.update()
+
+    def paintEvent(self, event):
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(18, 3, max(20, self.width() - 36), 70)
+        base_pen = QPen(QColor(theme.SURFACE2), 9, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+        painter.setPen(base_pen)
+        painter.drawArc(rect, 200 * 16, 140 * 16)
+
+        if self._wpm is not None:
+            progress = max(0.0, min(float(self._wpm) / 200.0, 1.0))
+            accent_pen = QPen(QColor(theme.PROCESSING), 9, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap)
+            painter.setPen(accent_pen)
+            painter.drawArc(rect, 200 * 16, int(140 * 16 * progress))
+
+        painter.setPen(QColor(theme.TEXT))
+        value = f"{self._wpm} WPM" if self._wpm is not None else "Need a new sample"
+        painter.drawText(QRectF(0, 42, self.width(), 24), Qt.AlignmentFlag.AlignCenter, value)
+
+
+class _ContextDonut(QWidget):
+    """A visual distribution of the foreground apps receiving dictation."""
+
+    _COLORS = (theme.ACTIVE, theme.DONE, theme.PROCESSING, theme.MASCOT_DARK, theme.BORDER)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._contexts: tuple[tuple[str, int], ...] = ()
+        self.setFixedSize(112, 112)
+
+    def set_values(self, contexts: tuple[tuple[str, int], ...]):
+        self._contexts = contexts
+        self.update()
+
+    def paintEvent(self, event):
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(10, 10, 92, 92)
+        total = sum(count for _label, count in self._contexts)
+        if not total:
+            painter.setPen(QPen(QColor(theme.SURFACE2), 12))
+            painter.drawArc(rect, 0, 360 * 16)
+            painter.setPen(QColor(theme.TEXT_DIM))
+            painter.drawText(QRectF(0, 46, self.width(), 20), Qt.AlignmentFlag.AlignCenter, "No data")
+            return
+
+        start = 90 * 16
+        for index, (_label, count) in enumerate(self._contexts):
+            span = max(1, round(360 * 16 * count / total))
+            painter.setPen(QPen(QColor(self._COLORS[index % len(self._COLORS)]), 12, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap))
+            painter.drawArc(rect, start, -span)
+            start -= span
+        painter.setPen(QColor(theme.TEXT))
+        painter.drawText(QRectF(0, 45, self.width(), 20), Qt.AlignmentFlag.AlignCenter, f"{total}")
+        painter.setPen(QColor(theme.TEXT_DIM))
+        painter.drawText(QRectF(0, 63, self.width(), 15), Qt.AlignmentFlag.AlignCenter, "sessions")
+
+
 class InsightsPanel(QWidget):
     """A local, Chatter-specific activity dashboard.
 
@@ -602,8 +673,10 @@ class InsightsPanel(QWidget):
             ("today", "TODAY", theme.DONE),
             ("dictionary", "PERSONAL VOCABULARY", theme.MASCOT_DARK),
         ]
+        self.pace_gauge = _PaceGauge()
         for index, (key, label, accent) in enumerate(metric_specs):
-            card, value_label = self._metric_card(label, accent)
+            visual = self.pace_gauge if key == "pace" else None
+            card, value_label = self._metric_card(label, accent, visual=visual)
             metrics.addWidget(card, index // 2, index % 2)
             self._metric_values[key] = value_label
         body.addLayout(metrics)
@@ -647,9 +720,13 @@ class InsightsPanel(QWidget):
         context_note.setWordWrap(True)
         context_note.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
         context_layout.addWidget(context_note)
+        context_visuals = QHBoxLayout()
+        self.context_donut = _ContextDonut()
+        context_visuals.addWidget(self.context_donut, alignment=Qt.AlignmentFlag.AlignTop)
         self.context_rows = QVBoxLayout()
         self.context_rows.setSpacing(8)
-        context_layout.addLayout(self.context_rows)
+        context_visuals.addLayout(self.context_rows, stretch=1)
+        context_layout.addLayout(context_visuals)
         context_layout.addStretch(1)
         lower.addWidget(context_card, 0, 0)
 
@@ -709,6 +786,26 @@ class InsightsPanel(QWidget):
             impact_grid.addLayout(column, 0, index)
             self.impact_values[key] = value
         impact_layout.addLayout(impact_grid)
+        self.pipeline_bars = {}
+        for key, label in (("cleanup", "Cleanup enabled"), ("pasted", "Paste success")):
+            bar_row = QVBoxLayout()
+            bar_header = QHBoxLayout()
+            bar_label = QLabel(label)
+            bar_label.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+            bar_value = QLabel("0%")
+            bar_value.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+            bar_header.addWidget(bar_label)
+            bar_header.addStretch(1)
+            bar_header.addWidget(bar_value)
+            bar_row.addLayout(bar_header)
+            bar = QProgressBar()
+            bar.setRange(0, 100)
+            bar.setValue(0)
+            bar.setTextVisible(False)
+            bar.setFixedHeight(8)
+            bar_row.addWidget(bar)
+            impact_layout.addLayout(bar_row)
+            self.pipeline_bars[key] = (bar, bar_value)
         body.addWidget(impact_card)
         body.addStretch(1)
 
@@ -717,7 +814,7 @@ class InsightsPanel(QWidget):
         self.refresh()
 
     @staticmethod
-    def _metric_card(label: str, accent: str) -> tuple[QFrame, QLabel]:
+    def _metric_card(label: str, accent: str, visual: QWidget | None = None) -> tuple[QFrame, QLabel]:
         card = _card()
         layout = QVBoxLayout(card)
         layout.setContentsMargins(14, 12, 14, 12)
@@ -728,6 +825,8 @@ class InsightsPanel(QWidget):
         value = QLabel("0")
         value.setStyleSheet(f"color: {theme.TEXT}; font-size: 24px; font-weight: 700;")
         layout.addWidget(value)
+        if visual is not None:
+            layout.addWidget(visual)
         return card, value
 
     def _set_context_rows(self, contexts: tuple[tuple[str, int], ...]):
@@ -771,8 +870,10 @@ class InsightsPanel(QWidget):
         self._metric_values["pace"].setText(f"{summary.average_wpm:,} WPM" if summary.average_wpm else "—")
         self._metric_values["today"].setText(f"{summary.words_today:,}")
         self._metric_values["dictionary"].setText(str(summary.dictionary_entries))
+        self.pace_gauge.set_value(summary.average_wpm)
         self.empty_hint.setVisible(summary.dictations == 0)
         self.daily_chart.set_values(summary.daily_words)
+        self.context_donut.set_values(summary.contexts)
         self._set_context_rows(summary.contexts)
 
         self.consistency_values["active"].setText(str(summary.active_days))
@@ -786,10 +887,16 @@ class InsightsPanel(QWidget):
         self.impact_values["latency"].setText(
             f"{summary.average_processing_ms} ms" if summary.average_processing_ms is not None else "—"
         )
+        cleanup_rate = round(summary.cleanup_sessions / summary.dictations * 100) if summary.dictations else 0
+        for key, value in (("cleanup", cleanup_rate), ("pasted", paste_rate)):
+            bar, label = self.pipeline_bars[key]
+            bar.setValue(value)
+            label.setText(f"{value}%")
 
 
 class MainWindow(QMainWindow):
     hotkey_changed = pyqtSignal()  # push-to-talk key was changed; listener needs a restart
+    setup_requested = pyqtSignal()
 
     def __init__(self, formatter):
         super().__init__()
@@ -860,6 +967,25 @@ class MainWindow(QMainWindow):
         v.addLayout(mascot_row)
         self._update_live_hotkey_pill()
 
+        self.setup_card = _card()
+        setup_row = QHBoxLayout(self.setup_card)
+        setup_row.setContentsMargins(12, 9, 12, 9)
+        setup_copy = QVBoxLayout()
+        self.setup_title = QLabel("Push-to-talk needs one quick setup")
+        self.setup_title.setStyleSheet(f"color: {theme.TEXT}; font-weight: 700;")
+        setup_copy.addWidget(self.setup_title)
+        self.setup_message = QLabel()
+        self.setup_message.setWordWrap(True)
+        self.setup_message.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+        setup_copy.addWidget(self.setup_message)
+        setup_row.addLayout(setup_copy, stretch=1)
+        setup_button = QPushButton("Finish setup")
+        setup_button.setObjectName("primary")
+        setup_button.clicked.connect(self.setup_requested.emit)
+        setup_row.addWidget(setup_button, alignment=Qt.AlignmentFlag.AlignVCenter)
+        v.addWidget(self.setup_card)
+        self._refresh_setup_banner()
+
         # A real place to try dictation on the app itself, first-run or
         # any time — click in, hold the hotkey, and watch the words land
         # right here. paste_action.py types via simulated keystrokes at
@@ -890,6 +1016,23 @@ class MainWindow(QMainWindow):
         keycode = config.load().get("hotkey_keycode", 60)
         label = next((l for kc, l, _w in SUPPORTED_HOTKEYS if kc == keycode), "your hotkey")
         self.live_hotkey_pill.setText(f"Hold {label} to talk")
+
+    def _refresh_setup_banner(self):
+        missing = []
+        if not permissions.is_microphone_authorized():
+            missing.append("Microphone")
+        if not permissions.input_monitoring_available():
+            missing.append("Input Monitoring")
+        if not permissions.is_trusted():
+            missing.append("Accessibility")
+        if missing:
+            self.setup_message.setText(
+                f"Chatter is ready, but the global shortcut is paused until macOS grants: {', '.join(missing)}. "
+                "Your audio and transcripts remain on this Mac."
+            )
+            self.setup_card.show()
+        else:
+            self.setup_card.hide()
 
     def set_live_state(self, state: str, label: str | None = None):
         """Mirrors the HUD's state on the Live Dictation tab's mascot, so
