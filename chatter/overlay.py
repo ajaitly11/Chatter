@@ -1,7 +1,7 @@
 """A small HUD docked at the physical notch (on a notched MacBook display) or
 bottom-right (fallback — external monitors, older Macs) that appears the
-instant push-to-talk starts: a small mascot on the left, a short
-backend-rotated phrase on the right. Never steals focus from whatever you're
+instant push-to-talk starts: a small mascot on the left, a literal state or
+live transcript preview on the right. Never steals focus from whatever you're
 typing into.
 
 Deliberately no slide-in/slide-out: it appears directly at rest with a very
@@ -24,8 +24,8 @@ from PyQt6.QtCore import (
     QTimer,
     pyqtProperty,
 )
-from PyQt6.QtGui import QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen
-from PyQt6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QHBoxLayout, QLabel, QWidget
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPainterPath
+from PyQt6.QtWidgets import QApplication, QGraphicsDropShadowEffect, QLabel, QWidget
 
 from . import phrases
 from . import theme
@@ -34,17 +34,8 @@ from .mascot import Mascot
 logger = logging.getLogger("chatter.overlay")
 
 
-def _active_screen_geometry():
-    """Which screen to show the HUD on: wherever the frontmost app's window
-    actually is — not the mouse cursor, which may be resting on a different
-    monitor than the one you're looking at/typing into (confirmed: with
-    Claude.app on the built-in display but the cursor idle on an external
-    monitor, the HUD was appearing on the wrong screen).
-
-    Picks the *largest* on-screen window owned by the frontmost app, not
-    specifically a "layer 0" one — inspecting Claude.app directly showed its
-    main window sits at layer 1000, not 0, so requiring layer 0 meant this
-    always fell back to primaryScreen for it."""
+def _frontmost_app_screen_geometry():
+    """Return the screen containing the frontmost app's largest window."""
     try:
         workspace = AppKit.NSWorkspace.sharedWorkspace()
         frontmost = workspace.frontmostApplication()
@@ -79,12 +70,55 @@ def _active_screen_geometry():
                 if screen:
                     return screen.geometry()
             else:
-                logger.warning("frontmost=%r pid=%s had no on-screen window — falling back to primaryScreen", app_name, pid)
+                logger.warning(
+                    "frontmost=%r pid=%s had no on-screen window",
+                    app_name, pid,
+                )
         else:
-            logger.warning("no frontmost application found — falling back to primaryScreen")
+            logger.warning("no frontmost application found")
     except Exception:
         logger.exception("couldn't determine the active app's screen")
-    return QApplication.primaryScreen().geometry()
+    return None
+
+
+def _built_in_screen_geometry():
+    for screen in QApplication.screens():
+        if _notch_geometry(screen.geometry()) is not None:
+            return screen.geometry()
+    return None
+
+
+def _active_screen_geometry(display_mode="notch"):
+    """Choose the HUD's display.
+
+    The primary HUD is anchored to the physical MacBook notch, including
+    while another app is fullscreen on an external monitor. A second HUD can
+    use ``display_mode="active"`` to mirror the same status onto the display
+    containing the frontmost app, so the feedback is still visible when the
+    user is looking only at an attached monitor.
+
+    The frontmost app's *largest* on-screen window is used rather than the
+    mouse cursor, which may be resting on a different monitor. This also
+    handles normal windows and fullscreen windows consistently.
+    """
+    if display_mode == "active":
+        active = _frontmost_app_screen_geometry()
+        if active is not None:
+            logger.info("using active app display for HUD: %s", active)
+            return active
+
+    built_in = _built_in_screen_geometry()
+    if built_in is not None:
+        logger.info("using built-in notched display for HUD: %s", built_in)
+        return built_in
+
+    active = _frontmost_app_screen_geometry()
+    if active is not None:
+        logger.info("using active app display for HUD fallback: %s", active)
+        return active
+
+    primary = QApplication.primaryScreen()
+    return primary.geometry() if primary is not None else None
 
 
 def _matching_ns_screen(qt_geometry):
@@ -145,7 +179,8 @@ def _notch_geometry(qt_geometry):
 # Space or a different virtual desktop. That needs the underlying NSWindow's
 # collectionBehavior/level set directly; Qt has no portable API for this.
 _NATIVE_COLLECTION_BEHAVIOR = (
-    AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
+    AppKit.NSWindowCollectionBehaviorCanJoinAllApplications
+    | AppKit.NSWindowCollectionBehaviorCanJoinAllSpaces
     | AppKit.NSWindowCollectionBehaviorFullScreenAuxiliary
     | AppKit.NSWindowCollectionBehaviorStationary
     | AppKit.NSWindowCollectionBehaviorIgnoresCycle
@@ -156,14 +191,29 @@ def _make_overlay_appear_everywhere(widget):
     try:
         ns_view = objc.objc_object(c_void_p=int(widget.winId()))
         ns_window = ns_view.window()
-        ns_window.setCollectionBehavior_(_NATIVE_COLLECTION_BEHAVIOR)
-        # A panel that hides when Chatter isn't the frontmost app would
-        # explain the exact symptom reported — the HUD needs to show
-        # precisely while some *other* app (Claude, or anything fullscreen)
-        # is frontmost, which is the opposite of when a utility panel
-        # defaults to staying visible.
+
+        # Mirror boring.notch's native window recipe. A Qt Tool widget is
+        # still backed by an NSPanel, but its default style mask is not the
+        # same as a non-activating HUD panel and can be kept behind a native
+        # fullscreen Space even when collectionBehavior is correct.
+        style_mask = ns_window.styleMask()
+        for style_name in (
+            "NSWindowStyleMaskBorderless",
+            "NSWindowStyleMaskNonactivatingPanel",
+            "NSWindowStyleMaskUtilityWindow",
+            "NSWindowStyleMaskHUDWindow",
+        ):
+            style_mask |= getattr(AppKit, style_name, 0)
+        ns_window.setStyleMask_(style_mask)
+        ns_window.setOpaque_(False)
+        ns_window.setHasShadow_(False)
+        ns_window.setBackgroundColor_(AppKit.NSColor.clearColor())
+        ns_window.setIgnoresMouseEvents_(True)
         ns_window.setHidesOnDeactivate_(False)
         ns_window.setCanHide_(False)
+        ns_window.setWorksWhenModal_(True)
+        ns_window.setReleasedWhenClosed_(False)
+        ns_window.setCollectionBehavior_(_NATIVE_COLLECTION_BEHAVIOR)
         # Confirmed via a standalone PyObjC check that Qt's frameless Tool
         # window really is an NSPanel (QNSPanel) under the hood — so it's
         # not a plain-NSWindow-vs-NSPanel gap. But that same check found
@@ -175,7 +225,9 @@ def _make_overlay_appear_everywhere(widget):
         # fullscreen-Space case here) and canBecomeKey=false. Both are
         # settable at runtime even though Qt created the panel.
         ns_window.setFloatingPanel_(True)
-        ns_window.setBecomesKeyOnlyIfNeeded_(True)
+        ns_window.setBecomesKeyOnlyIfNeeded_(False)
+        if hasattr(AppKit, "NSWindowAnimationBehaviorNone"):
+            ns_window.setAnimationBehavior_(AppKit.NSWindowAnimationBehaviorNone)
         # setFloatingPanel_ has a side effect confirmed live: it silently
         # resets the window's level to NSFloatingWindowLevel (3), clobbering
         # whatever was set before it. setLevel_ has to run AFTER it, not
@@ -190,12 +242,29 @@ def _make_overlay_appear_everywhere(widget):
         # treatment to the way it does for ordinary elevated levels).
         ns_window.setLevel_(AppKit.NSMainMenuWindowLevel + 3)
         logger.info(
-            "native window level set: level=%s collectionBehavior=%s hidesOnDeactivate=%s floating=%s",
+            "native HUD panel configured: styleMask=%s level=%s collectionBehavior=%s hidesOnDeactivate=%s floating=%s",
+            ns_window.styleMask(),
             ns_window.level(), ns_window.collectionBehavior(), ns_window.hidesOnDeactivate(),
             ns_window.isFloatingPanel(),
         )
     except Exception:
         logger.exception("couldn't set native window level — HUD may not show over other apps")
+
+
+def _order_overlay_front(widget):
+    """Order the native panel without activating Chatter.
+
+    Qt's ``show()`` is normally enough above ordinary windows, but a
+    full-screen Space can keep a deactivated auxiliary panel behind the
+    full-screen surface even when its collection behavior is correct. The
+    AppKit call is deliberately made after show() on every new ordering.
+    """
+    try:
+        ns_view = objc.objc_object(c_void_p=int(widget.winId()))
+        ns_window = ns_view.window()
+        ns_window.orderFrontRegardless()
+    except Exception:
+        logger.exception("couldn't order HUD panel above the active Space")
 
 
 def _notch_pill_path(w: float, h: float, bottom_r: float) -> QPainterPath:
@@ -207,6 +276,7 @@ def _notch_pill_path(w: float, h: float, bottom_r: float) -> QPainterPath:
     boring.notch's NotchShape.swift exactly); that added complexity without
     reading as cleaner in practice, so this starts from the simplest shape
     that still sells "expanding out of the notch" and can be refined later."""
+    bottom_r = min(bottom_r, h / 2)
     path = QPainterPath()
     path.moveTo(0, 0)
     path.lineTo(w, 0)
@@ -219,14 +289,14 @@ def _notch_pill_path(w: float, h: float, bottom_r: float) -> QPainterPath:
     return path
 
 HEIGHT = 38
-MIN_WIDTH = 190  # content floor — long phrases elide rather than growing past this
+# Keep one calm, predictable surface for the whole interaction. This is the
+# largest width the previous content-driven HUD reached, so existing copy has
+# room without making the window resize on every partial ASR update.
+HUD_WIDTH = 520
 RIGHT_MARGIN = 26
 BOTTOM_MARGIN = 30
 MASCOT_SIZE = 26
 BOTTOM_RADIUS = 14
-# A little wider than the bare notch so it fully covers the notch's own
-# rounded corners with no hairline gap at the seam.
-NOTCH_WIDTH_PADDING = 8
 # The physical notch casing is flat black, not the app's dark-brown theme
 # background — matching it exactly (rather than theme.BG, which is a warm
 # near-black but still visibly brown next to the real thing) is what sells
@@ -235,8 +305,9 @@ NOTCH_BLACK = "#000000"
 
 
 class Overlay(QWidget):
-    def __init__(self):
+    def __init__(self, display_mode="notch"):
         super().__init__()
+        self._display_mode = display_mode
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -244,7 +315,7 @@ class Overlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.resize(MIN_WIDTH, HEIGHT)
+        self.resize(HUD_WIDTH, HEIGHT)
         _make_overlay_appear_everywhere(self)
         self._opacity = 1.0
 
@@ -259,20 +330,28 @@ class Overlay(QWidget):
         self._shadow.setColor(QColor(0, 0, 0, 140))
         self.setGraphicsEffect(self._shadow)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(16, 0, 16, 0)
-        layout.setSpacing(10)
-        self._mascot = Mascot(size=MASCOT_SIZE)
-        layout.addWidget(self._mascot)
-
-        self._label = QLabel("")
+        # The label owns the full surface so its text can be geometrically
+        # centered. The mascot is a small listening cue layered on the left;
+        # it never participates in the text layout and therefore cannot make
+        # status messages appear visually off-center.
+        self._label = QLabel(self)
         self._label.setWordWrap(False)
+        self._label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         font = QFont()
         font.setPointSize(12)
         font.setWeight(QFont.Weight.DemiBold)
         self._label.setFont(font)
-        self._label.setStyleSheet(f"color: {theme.TEXT};")
-        layout.addWidget(self._label, stretch=1)
+        # The application-wide QWidget rule supplies a terracotta fill to
+        # child widgets unless they opt out. Without this explicit
+        # transparency the text looks like it has its own orange card laid
+        # over the black notch.
+        self._label.setStyleSheet(f"color: {theme.TEXT}; background: transparent;")
+        self._label.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        self._mascot = Mascot(size=MASCOT_SIZE, parent=self)
+        self._mascot.setStyleSheet("background: transparent;")
+        self._label.raise_()
+        self._mascot.raise_()
 
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
@@ -284,13 +363,40 @@ class Overlay(QWidget):
         self._move_anim.setDuration(160)
         self._move_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
+        # Grow from the physical notch's width into the full HUD surface.
+        self._expand_anim = QPropertyAnimation(self, b"geometry")
+        self._expand_anim.setDuration(300)
+        self._expand_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
         self._fade_anim = QPropertyAnimation(self, b"hudOpacity")
         self._fade_anim.setDuration(90)
 
         self._hiding = False
         self._screen_geometry = None
+        self._physical_notch_width = 0
+        self._physical_notch_height = 0
         self._state = None
         self._notch_mode = False
+        self._display_text = ""
+        self._position_children()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_children()
+        if getattr(self, "_display_text", ""):
+            self._set_label_text(self._display_text)
+
+    def _position_children(self):
+        if not hasattr(self, "_label"):
+            return
+        # The window includes the menu-bar/notch plane above the content. Do
+        # not center status text in that black strip; keep the character and
+        # text in the part that grows below the physical notch.
+        content_top = self._physical_notch_height if self._notch_mode else 0
+        content_height = max(0, self.height() - content_top)
+        self._label.setGeometry(0, content_top, self.width(), content_height)
+        mascot_y = content_top + max(0, (content_height - self._mascot.height()) // 2)
+        self._mascot.setGeometry(16, mascot_y, self._mascot.width(), self._mascot.height())
 
     # windowOpacity as an animatable Qt property -------------------------
 
@@ -322,45 +428,70 @@ class Overlay(QWidget):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.drawPath(path)
         else:
+            # The external-display mirror is the same HUD, not a themed app
+            # card. Keeping both surfaces true black makes the character and
+            # live text feel like one notch-native object everywhere.
             path = QPainterPath()
             path.addRoundedRect(QRectF(0, 0, w, h), h / 2, h / 2)
-            gradient = QLinearGradient(0, 0, 0, h)
-            gradient.setColorAt(0.0, QColor(theme.SURFACE2))
-            gradient.setColorAt(1.0, QColor(theme.BG))
-            painter.setBrush(gradient)
+            painter.setBrush(QColor(NOTCH_BLACK))
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.drawPath(path)
-            painter.setPen(QPen(theme.border_color(), 1))
-            painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawPath(path)
 
     # text -----------------------------------------------------------
 
     def _set_label_text(self, text: str):
         metrics = QFontMetrics(self._label.font())
-        available = self.width() - (MASCOT_SIZE + 16 + 10 + 16)
-        self._label.setText(metrics.elidedText(text, Qt.TextElideMode.ElideRight, max(20, available)))
+        # Reserve a little space for the mascot while keeping the status
+        # centered in the fixed surface. The same layout remains stable as
+        # the character changes pose between listening, processing, done,
+        # and error.
+        mascot_reserve = MASCOT_SIZE + 28 if self._mascot.isVisible() else 0
+        available = self.width() - 32 - mascot_reserve
+        # The old right-elision left users staring at the beginning of a
+        # long sentence forever. A live HUD should privilege the newest
+        # words, so the visible slice follows the speaker as the sentence
+        # grows. The full text remains in the Live Dictation tab and in
+        # history, while the HUD stays compact enough to read at a glance.
+        self._label.setText(metrics.elidedText(text, Qt.TextElideMode.ElideLeft, max(20, available)))
 
     # positioning --------------------------------------------------------
 
     def _compute_geometry(self):
-        """(x, y, width, notch_mode) for the HUD's resting position — width
-        varies because a notch-docked pill is sized to that notch (plus
-        boring.notch's own small overlap padding), not a fixed content box."""
+        """(x, y, fixed width, notch_mode) for the HUD's resting position."""
         if self._screen_geometry is None:
-            self._screen_geometry = _active_screen_geometry()
+            self._screen_geometry = _active_screen_geometry(self._display_mode)
         screen = self._screen_geometry
         notch = _notch_geometry(screen)
         if notch is not None:
             center_x, notch_bottom_y, notch_width = notch
-            width = max(MIN_WIDTH, int(notch_width) + NOTCH_WIDTH_PADDING)
-            return int(center_x - width / 2), int(notch_bottom_y), width, True
+            self._physical_notch_width = max(1, int(round(notch_width)))
+            self._physical_notch_height = max(1, int(round(notch_bottom_y - screen.y())))
+            # Cover the menu-bar plane as well as the expanded content. A
+            # single top-level black surface prevents the old two-rectangle
+            # seam between macOS's menu bar and Chatter's extension.
+            return int(center_x - HUD_WIDTH / 2), int(screen.y()), HUD_WIDTH, True
+        self._physical_notch_width = 0
+        self._physical_notch_height = 0
         # Fallback: no notch on the active screen (external monitor, older
         # Mac) — dock bottom-right instead, same spot this used before.
-        width = MIN_WIDTH
-        x = screen.x() + screen.width() - width - RIGHT_MARGIN
+        x = screen.x() + screen.width() - HUD_WIDTH - RIGHT_MARGIN
         y = screen.y() + screen.height() - HEIGHT - BOTTOM_MARGIN
-        return x, y, width, False
+        return x, y, HUD_WIDTH, False
+
+    def targets_external_display(self):
+        """Whether the active-app mirror belongs on an external display."""
+        if self._display_mode != "active":
+            return False
+        geometry = _active_screen_geometry("active")
+        return geometry is not None and _notch_geometry(geometry) is None
+
+    def dismiss(self):
+        """Hide immediately and forget the previous display target."""
+        self._hide_timer.stop()
+        self._fade_anim.stop()
+        self.hide()
+        self._hiding = False
+        self._screen_geometry = None
 
     def _animate_to(self, x: int, y: int):
         self._move_anim.stop()
@@ -372,29 +503,38 @@ class Overlay(QWidget):
 
     def show_state(self, state: str, detail: str = "", phrase: str | None = None):
         """`detail` is only shown verbatim for state == "error" (real,
-        actionable error text). Every other state shows a short phrase —
-        `phrase` if the caller passed one (so the HUD and the Live Dictation
-        tab can show the *same* rotated phrase at the same moment, instead
-        of each independently picking their own), otherwise one picked here
-        from phrases.py."""
+        actionable error text). Every other state shows `phrase` when the
+        caller provides it, allowing literal statuses and live transcript
+        previews to share the same HUD surface."""
         self._hiding = False
         mascot_state = "listening" if state == "listening" else state
         self._mascot.set_state(mascot_state)
         self._hide_timer.stop()
 
         text = detail if state == "error" else (phrase if phrase is not None else phrases.pick(state))
+        self._display_text = text
         if state != self._state:
             self._state = state
 
+        # The character stays present for the entire interaction, including
+        # processing, done, and error. That gives every status one consistent
+        # visual anchor while the fixed black surface keeps text centered.
+        self._mascot.setVisible(state in {"listening", "processing", "done", "error"})
         rx, ry, width, notch_mode = self._compute_geometry()
         self._notch_mode = notch_mode
         self._shadow.setEnabled(not notch_mode)
-        self.resize(width, HEIGHT)
+        # Geometry is set below; notch mode begins at the real notch width and
+        # expands into this final width.
         if not self.isVisible():
             # Appears directly at rest — no slide from off-screen. That
             # slide was the main source of felt lag; press-to-visible should
             # be as close to instant as a fade can make it.
-            self.move(rx, ry)
+            if notch_mode and self._physical_notch_width > 0:
+                start_width = self._physical_notch_width
+                start_x = int(rx + (width - start_width) / 2)
+                self.setGeometry(start_x, ry, start_width, self._physical_notch_height)
+            else:
+                self.setGeometry(rx, ry, width, HEIGHT)
             self._opacity = 0.0
             self.setWindowOpacity(0.0)
             # Re-applied on every show(), not just once in __init__: macOS/Qt
@@ -406,11 +546,20 @@ class Overlay(QWidget):
             # screen with default (non-cross-Space) properties first.
             _make_overlay_appear_everywhere(self)
             self.show()
-            logger.info("HUD shown: resting at (%d, %d) size %dx%d notch_mode=%s", rx, ry, width, HEIGHT, notch_mode)
+            _order_overlay_front(self)
+            target_height = self._physical_notch_height + HEIGHT if notch_mode else HEIGHT
+            logger.info("HUD shown: resting at (%d, %d) target size %dx%d notch_mode=%s", rx, ry, width, target_height, notch_mode)
             self._fade_anim.stop()
             self._fade_anim.setStartValue(0.0)
             self._fade_anim.setEndValue(1.0)
             self._fade_anim.start()
+            if notch_mode and self._physical_notch_width > 0:
+                self._expand_anim.stop()
+                self._expand_anim.setStartValue(self.geometry())
+                self._expand_anim.setEndValue(
+                    QRectF(rx, ry, width, self._physical_notch_height + HEIGHT).toRect()
+                )
+                self._expand_anim.start()
         else:
             # Already up (e.g. listening -> processing mid-hold) — only
             # worth animating if the target screen actually changed.

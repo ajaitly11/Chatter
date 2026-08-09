@@ -1,11 +1,15 @@
 import logging
+import math
 import shutil
 import threading
+import time
 import traceback
 from pathlib import Path
 
 import AppKit
+import numpy as np
 import objc
+import sounddevice as sd
 from PyQt6.QtCore import (
     QEasingCurve,
     Qt,
@@ -20,6 +24,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDialog,
     QFileDialog,
     QFrame,
     QHBoxLayout,
@@ -45,6 +50,8 @@ from . import config
 from . import dictionary
 from . import history
 from . import llama_runtime
+from . import permissions
+from .audio_capture import StreamingMicRecorder
 from . import theme
 from .mascot import Mascot
 from .native_hotkey import SUPPORTED_HOTKEYS
@@ -117,7 +124,10 @@ class TranscribeWorker(QThread):
             # transcribe.cpp only populates Result.words (needed for
             # word-level SRT export) when explicitly asked — its default
             # ("auto") timestamp mode doesn't include them.
-            result = service.transcribe(pcm, self.model_path, self.backend, timestamps="word")
+            language = config.load().get("language", "en") or None
+            result = service.transcribe(
+                pcm, self.model_path, self.backend, language=language, timestamps="word"
+            )
             text = dictionary.apply_corrections(result.text)
             words = getattr(result, "words", None)
 
@@ -128,6 +138,34 @@ class TranscribeWorker(QThread):
             self.finished.emit(text, words)
         except Exception as e:
             self.failed.emit(f"{e}\n\n{traceback.format_exc()}")
+
+
+class MicTestWorker(QThread):
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, device):
+        super().__init__()
+        self.device = device
+
+    def run(self):
+        recorder = StreamingMicRecorder()
+        try:
+            recorder.start(device=self.device)
+            time.sleep(0.8)
+            recorder.stop()
+            chunks = list(recorder.chunks())
+            pcm = np.concatenate(chunks) if chunks else np.array([], dtype=np.float32)
+            rms = float(np.sqrt(np.mean(pcm.astype(np.float64) ** 2))) if pcm.size else 0.0
+            if rms < 0.005:
+                self.finished.emit(False, f"Very little audio detected (RMS {rms:.4f}). Check the selected device and macOS microphone permission.")
+            else:
+                self.finished.emit(True, f"Microphone looks good (RMS {rms:.4f}).")
+        except Exception as exc:
+            try:
+                recorder.stop()
+            except Exception:
+                pass
+            self.finished.emit(False, f"Microphone test failed: {exc}")
 
 
 def _card() -> QFrame:
@@ -148,7 +186,13 @@ def _scroll_list(inner: QWidget, min_height: int = CONTENT_H - 90) -> QScrollAre
     return area
 
 
-def _squiggle_path(width: float, y: float, amplitude: float = 2.6, period: float = 11.0) -> QPainterPath:
+def _squiggle_path(
+    width: float,
+    y: float,
+    amplitude: float = 2.6,
+    period: float = 11.0,
+    phase: float = 0.0,
+) -> QPainterPath:
     """A repeating wave — chained quadratic Beziers alternating the control
     point above/below the baseline — matching the mockup's hand-drawn
     squiggle underline (its SVG paths are literally this same
@@ -156,14 +200,12 @@ def _squiggle_path(width: float, y: float, amplitude: float = 2.6, period: float
     path = QPainterPath()
     path.moveTo(0, y)
     x = 0.0
-    up = True
     while x < width - 0.01:
         end_x = min(x + period, width)
         cx = (x + end_x) / 2
-        cy = y - amplitude if up else y + amplitude
+        cy = y - amplitude * math.sin((cx / period) * math.pi + phase)
         path.quadTo(cx, cy, end_x, y)
         x = end_x
-        up = not up
     return path
 
 
@@ -181,9 +223,11 @@ class SquiggleTabBar(QTabBar):
         self._underline_x = 0.0
         self._underline_w = 0.0
         self._underline_y = 0.0
+        self._wave_phase = 0.0
         self._anim_x = QPropertyAnimation(self, b"underlineX")
         self._anim_w = QPropertyAnimation(self, b"underlineWidth")
-        for anim in (self._anim_x, self._anim_w):
+        self._anim_phase = QPropertyAnimation(self, b"wavePhase")
+        for anim in (self._anim_x, self._anim_w, self._anim_phase):
             anim.setDuration(220)
             anim.setEasingCurve(QEasingCurve.Type.OutCubic)
         self.currentChanged.connect(self._animate_to)
@@ -206,9 +250,47 @@ class SquiggleTabBar(QTabBar):
 
     underlineWidth = pyqtProperty(float, _get_underline_w, _set_underline_w)
 
+    def _get_wave_phase(self):
+        return self._wave_phase
+
+    def _set_wave_phase(self, value):
+        self._wave_phase = value
+        self.update()
+
+    wavePhase = pyqtProperty(float, _get_wave_phase, _set_wave_phase)
+
     def _target(self, index: int):
         rect = self.tabRect(index)
         return rect.x() + _SQUIGGLE_MARGIN, rect.width() - 2 * _SQUIGGLE_MARGIN, rect.bottom() - 4
+
+    def _sync_to_current(self):
+        """Install a complete initial underline after QTabBar lays out tabs.
+
+        On startup ``currentChanged`` can fire before tab geometry exists.
+        Waiting one event-loop turn avoids the half-width/top-left squiggle
+        that otherwise appears for the first frame of the window.
+        """
+        index = self.currentIndex()
+        if index < 0:
+            return
+        target_x, target_w, target_y = self._target(index)
+        if target_w <= 0:
+            return
+        for anim in (self._anim_x, self._anim_w, self._anim_phase):
+            anim.stop()
+        self._underline_x = float(target_x)
+        self._underline_w = float(target_w)
+        self._underline_y = float(target_y)
+        self._wave_phase = 0.0
+        self.update()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        QTimer.singleShot(0, self._sync_to_current)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._sync_to_current)
 
     def _animate_to(self, index: int):
         if index < 0:
@@ -225,6 +307,10 @@ class SquiggleTabBar(QTabBar):
         self._anim_w.setStartValue(self._underline_w)
         self._anim_w.setEndValue(float(target_w))
         self._anim_w.start()
+        self._anim_phase.stop()
+        self._anim_phase.setStartValue(self._wave_phase)
+        self._anim_phase.setEndValue(self._wave_phase + math.tau)
+        self._anim_phase.start()
 
     def paintEvent(self, event):
         super().paintEvent(event)
@@ -243,7 +329,7 @@ class SquiggleTabBar(QTabBar):
         pen = QPen(QColor(theme.ACTIVE), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap, Qt.PenJoinStyle.RoundJoin)
         painter.setPen(pen)
         painter.translate(self._underline_x, self._underline_y)
-        painter.drawPath(_squiggle_path(self._underline_w, 0))
+        painter.drawPath(_squiggle_path(self._underline_w, 0, phase=self._wave_phase))
 
 
 class _ModelSlotPanel(QWidget):
@@ -258,11 +344,15 @@ class _ModelSlotPanel(QWidget):
 
     def __init__(self, description: str, dest_dir: Path, config_key: str,
                  browse_url: str, browse_label: str, on_change=None,
-                 runtime_widget: QWidget | None = None):
+                 runtime_widget: QWidget | None = None,
+                 requires_streaming: bool = False,
+                 fallback_paths: tuple[Path, ...] = ()):
         super().__init__()
         self.dest_dir = dest_dir
         self.config_key = config_key
         self.on_change = on_change
+        self.requires_streaming = requires_streaming
+        self.fallback_paths = fallback_paths
 
         v = QVBoxLayout(self)
         v.setContentsMargins(20, 16, 20, 16)
@@ -303,13 +393,30 @@ class _ModelSlotPanel(QWidget):
 
     def refresh(self):
         current = config.load().get(self.config_key, "")
-        self.active_label.setText(Path(current).name if current else "None selected yet — import a file below")
+        if current and Path(current).exists():
+            self.active_label.setText(Path(current).name)
+            return
+        fallback = next((path for path in self.fallback_paths if path.exists()), None)
+        if fallback is not None:
+            self.active_label.setText(f"Auto: {fallback.name}")
+        else:
+            self.active_label.setText("None selected yet — import a file below")
 
     def _import_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Choose a .gguf model file", "", "GGUF models (*.gguf)")
         if not path:
             return
         try:
+            if self.requires_streaming:
+                import transcribe_cpp
+                probe = transcribe_cpp.Model(path, backend="cpu")
+                try:
+                    if not probe.capabilities.supports_streaming:
+                        raise ValueError(
+                            "This model does not support live streaming. Choose a streaming ASR model."
+                        )
+                finally:
+                    probe.close()
             self.dest_dir.mkdir(parents=True, exist_ok=True)
             dest = self.dest_dir / Path(path).name
             if Path(path).resolve() != dest.resolve():
@@ -322,6 +429,71 @@ class _ModelSlotPanel(QWidget):
         self.refresh()
         if self.on_change:
             self.on_change()
+
+
+class _ModelGuideDialog(QDialog):
+    """A short, in-app model chooser instead of asking people to read a file."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Choose a local model")
+        self.setMinimumSize(520, 420)
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(24, 22, 24, 20)
+        v.setSpacing(12)
+
+        eyebrow = QLabel("A SIMPLE START")
+        eyebrow.setObjectName("sectionTitle")
+        v.addWidget(eyebrow)
+        title = QLabel("Choose the job, not a catalog.")
+        title.setStyleSheet(f"color: {theme.TEXT}; font-size: 20px; font-weight: 700;")
+        v.addWidget(title)
+        intro = QLabel(
+            "Chatter keeps live dictation fast with one streaming ASR model. "
+            "A second, small local model is optional and only polishes the text."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        v.addWidget(intro)
+
+        steps = (
+            ("1", "Start with live dictation", "Use Nemotron 3.5 streaming for push-to-talk. It is the model that produces the live preview and the final raw transcript."),
+            ("2", "Add cleanup only if you want it", "Choose a small 2B–4B instruct GGUF for punctuation, corrections, and context-aware formatting. It runs locally after the stream."),
+            ("3", "Match it to your Mac", "8 GB: keep cleanup off. 16 GB: Nemotron + a small cleanup model. 24 GB or more: you can try a larger cleanup model, but measure latency."),
+        )
+        for number, heading, body in steps:
+            card = _card()
+            h = QHBoxLayout(card)
+            h.setContentsMargins(12, 10, 12, 10)
+            badge = _pill(number, theme.ACTIVE, theme.rgba_str(theme.active_dim()))
+            badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            badge.setFixedWidth(24)
+            h.addWidget(badge, alignment=Qt.AlignmentFlag.AlignTop)
+            text_col = QVBoxLayout()
+            step_title = QLabel(heading)
+            step_title.setStyleSheet(f"color: {theme.TEXT}; font-weight: 650;")
+            text_col.addWidget(step_title)
+            step_body = QLabel(body)
+            step_body.setWordWrap(True)
+            step_body.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 12px;")
+            text_col.addWidget(step_body)
+            h.addLayout(text_col, stretch=1)
+            v.addWidget(card)
+
+        links = QLabel(
+            'Download models from <a href="https://huggingface.co/models?search=gguf">Hugging Face</a> · '
+            '<a href="https://github.com/ggerganov/llama.cpp/releases">llama.cpp runtime</a>'
+        )
+        links.setOpenExternalLinks(True)
+        links.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 12px;")
+        v.addWidget(links)
+        v.addStretch(1)
+
+        close_btn = QPushButton("Done")
+        close_btn.setObjectName("primary")
+        close_btn.clicked.connect(self.accept)
+        v.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
 
 class MainWindow(QMainWindow):
@@ -339,6 +511,7 @@ class MainWindow(QMainWindow):
         self.media_path: str | None = None
         self.last_words = None
         self.worker: TranscribeWorker | None = None
+        self._latest_live_preview = ""
         self._live_idle_timer = QTimer(self)
         self._live_idle_timer.setSingleShot(True)
         self._live_idle_timer.timeout.connect(lambda: self.set_live_state("idle"))
@@ -352,6 +525,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_history_tab(), "History")
         self.tabs.addTab(self._build_settings_tab(), "Settings")
         self.setCentralWidget(self.tabs)
+        # The first underline can be painted before QTabBar has its final
+        # geometry. Synchronize once after the window is laid out so Live
+        # Dictation looks complete on first launch, not only after a tab swap.
+        QTimer.singleShot(80, self.tabs.tabBar()._sync_to_current)
 
         self.refresh_models()
         self._reload_files_history()
@@ -418,11 +595,9 @@ class MainWindow(QMainWindow):
     def set_live_state(self, state: str, label: str | None = None):
         """Mirrors the HUD's state on the Live Dictation tab's mascot, so
         the main window (if open) shows the same listening/processing/done
-        story, not just a status string. Unlike the HUD (which shows a
-        short rotated phrase — "I'm here", "all ears" — meant to feel
-        light in a small space), this tab is the primary surface and shows
-        `label` verbatim: the literal status text ("Listening…",
-        "Transcribing…") rather than flavor text, so it's unambiguous."""
+        story, not just a status string. Both the HUD and this tab use the
+        literal state text; the mascot provides the character while the
+        transcript preview provides the immediate feedback."""
         self._live_idle_timer.stop()
         self.live_mascot.set_state(state)
         if state == "idle":
@@ -433,6 +608,15 @@ class MainWindow(QMainWindow):
             self.live_hotkey_pill.hide()
             if state in ("done", "error"):
                 self._live_idle_timer.start(2500)
+
+    def set_live_preview(self, text: str):
+        """Retain the latest streaming draft for diagnostics/history.
+
+        The HUD is the unobtrusive live surface; the practice box is reserved
+        for the committed result so tentative text cannot be pasted twice or
+        overwrite a user's existing draft.
+        """
+        self._latest_live_preview = text or ""
 
     # --- Files tab -------------------------------------------------------
 
@@ -471,16 +655,12 @@ class MainWindow(QMainWindow):
         self.open_btn.clicked.connect(self.open_file)
         self.file_label = QLabel("No file selected")
         self.file_label.setStyleSheet(f"color: {theme.TEXT_DIM};")
-        self.format_checkbox = QCheckBox("Clean up with AI ✨")
-        self.format_checkbox.setChecked(cfg.get("formatting_enabled", True))
-        self.format_checkbox.toggled.connect(self._on_formatting_toggled)
         self.transcribe_btn = QPushButton("Transcribe")
         self.transcribe_btn.setObjectName("primary")
         self.transcribe_btn.clicked.connect(self.start_transcription)
         self.transcribe_btn.setEnabled(False)
         row.addWidget(self.open_btn)
         row.addWidget(self.file_label, stretch=1)
-        row.addWidget(self.format_checkbox)
         row.addWidget(self.transcribe_btn)
         v.addLayout(row)
 
@@ -564,19 +744,54 @@ class MainWindow(QMainWindow):
     def _build_models_tab(self) -> QWidget:
         w = QWidget()
         v = QVBoxLayout(w)
-        v.setContentsMargins(0, 0, 0, 0)
+        v.setContentsMargins(20, 16, 20, 16)
+        v.setSpacing(12)
+
+        heading_row = QHBoxLayout()
+        heading_col = QVBoxLayout()
+        heading = QLabel("Models that make sense")
+        heading.setStyleSheet(f"color: {theme.TEXT}; font-size: 18px; font-weight: 700;")
+        heading_col.addWidget(heading)
+        subtitle = QLabel("One model for speed. One optional model for polish.")
+        subtitle.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 12px;")
+        heading_col.addWidget(subtitle)
+        heading_row.addLayout(heading_col, stretch=1)
+        guide_btn = QPushButton("How to choose")
+        guide_btn.clicked.connect(lambda: _ModelGuideDialog(self).exec())
+        heading_row.addWidget(guide_btn, alignment=Qt.AlignmentFlag.AlignVCenter)
+        v.addLayout(heading_row)
+
         sub_tabs = QTabWidget()
         sub_tabs.setTabBar(SquiggleTabBar())
 
         self.transcription_panel = _ModelSlotPanel(
-            description="The Whisper/transcribe.cpp model used for push-to-talk and file transcription.",
+            description="Batch model used for file transcription. Push-to-talk uses the Live preview model only, then optionally formats it locally.",
             dest_dir=MODELS_DIR,
             config_key="whisper_model_path",
             browse_url="https://huggingface.co/models?search=transcribe.cpp",
             browse_label="browse transcribe.cpp models",
             on_change=self.refresh_models,
+            fallback_paths=(
+                MODELS_DIR / "whisper-large-v3-turbo-Q8_0.gguf",
+                MODELS_DIR / "parakeet-tdt-0.6b-v2-Q8_0.gguf",
+            ),
         )
-        sub_tabs.addTab(self.transcription_panel, "Transcription")
+        sub_tabs.addTab(self.transcription_panel, "File transcription")
+
+        self.streaming_panel = _ModelSlotPanel(
+            description="The single local ASR model used for push-to-talk: it shows live text and finalizes the same transcript on release.",
+            dest_dir=MODELS_DIR,
+            config_key="streaming_model_path",
+            browse_url="https://huggingface.co/models?search=streaming+asr+gguf",
+            browse_label="browse streaming ASR models",
+            requires_streaming=True,
+            fallback_paths=(
+                MODELS_DIR / "nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf",
+                MODELS_DIR / "nemotron-speech-streaming-en-0.6b-Q8_0.gguf",
+                MODELS_DIR / "moonshine-streaming-tiny-Q8_0.gguf",
+            ),
+        )
+        sub_tabs.addTab(self.streaming_panel, "Live dictation")
 
         self.cleanup_panel = _ModelSlotPanel(
             description='A small instruction-tuned chat model for the "Clean up with AI" pass.',
@@ -586,7 +801,7 @@ class MainWindow(QMainWindow):
             browse_label="browse instruct GGUF chat models",
             runtime_widget=self._build_llama_runtime_card(),
         )
-        sub_tabs.addTab(self.cleanup_panel, "Text Cleanup")
+        sub_tabs.addTab(self.cleanup_panel, "AI cleanup")
 
         v.addWidget(sub_tabs)
         return w
@@ -659,6 +874,17 @@ class MainWindow(QMainWindow):
         v = QVBoxLayout(w)
         v.setContentsMargins(20, 16, 20, 16)
         v.setSpacing(10)
+
+        heading = QLabel("Your personal vocabulary")
+        heading.setStyleSheet(f"color: {theme.TEXT}; font-size: 18px; font-weight: 700;")
+        v.addWidget(heading)
+        explanation = QLabel(
+            "Chatter learns small, high-confidence corrections from edits after a paste. "
+            "You can also add a name, phrase, or fused word here."
+        )
+        explanation.setWordWrap(True)
+        explanation.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 12px;")
+        v.addWidget(explanation)
 
         self.dict_hint = QLabel()
         self.dict_hint.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 12px;")
@@ -734,13 +960,27 @@ class MainWindow(QMainWindow):
         v.setContentsMargins(20, 16, 20, 16)
         v.setSpacing(10)
 
+        heading = QLabel("History")
+        heading.setStyleSheet(f"color: {theme.TEXT}; font-size: 18px; font-weight: 700;")
+        v.addWidget(heading)
+
         row = QHBoxLayout()
-        row.addWidget(QLabel("Every push-to-talk result, kept even if it never got pasted."))
+        subtitle = QLabel("Your recent dictation, kept even if it never got pasted.")
+        subtitle.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 12px;")
+        row.addWidget(subtitle)
         row.addStretch(1)
+        self.history_count_label = QLabel("")
+        self.history_count_label.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+        row.addWidget(self.history_count_label)
         clear_btn = QPushButton("Clear")
         clear_btn.clicked.connect(self._clear_dictation_history)
         row.addWidget(clear_btn)
         v.addLayout(row)
+
+        self.history_search = QLineEdit()
+        self.history_search.setPlaceholderText("Search your dictation…")
+        self.history_search.textChanged.connect(self._reload_dictation_history)
+        v.addWidget(self.history_search)
 
         self.dictation_list_container = QWidget()
         self.dictation_list_layout = QVBoxLayout(self.dictation_list_container)
@@ -755,7 +995,23 @@ class MainWindow(QMainWindow):
             item = self.dictation_list_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        for entry in history.load(kind="dictation", limit=100):
+        query = self.history_search.text().strip().lower() if hasattr(self, "history_search") else ""
+        entries = history.load(kind="dictation", limit=100)
+        if query:
+            entries = [entry for entry in entries if query in entry.get("text", "").lower()]
+        if hasattr(self, "history_count_label"):
+            self.history_count_label.setText(f"{len(entries)} result{'s' if len(entries) != 1 else ''}")
+        if not entries:
+            empty = _card()
+            empty_layout = QVBoxLayout(empty)
+            empty_layout.setContentsMargins(16, 18, 16, 18)
+            empty_label = QLabel("No dictation matches that search yet.") if query else QLabel("Your next thought will appear here.")
+            empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            empty_label.setStyleSheet(f"color: {theme.TEXT_DIM};")
+            empty_layout.addWidget(empty_label)
+            self.dictation_list_layout.insertWidget(self.dictation_list_layout.count() - 1, empty)
+            return
+        for entry in entries:
             self.dictation_list_layout.insertWidget(self.dictation_list_layout.count() - 1, self._dictation_row(entry))
 
     def _clear_dictation_history(self):
@@ -793,11 +1049,19 @@ class MainWindow(QMainWindow):
     # --- Settings tab ------------------------------------------------------
 
     def _build_settings_tab(self) -> QWidget:
-        w = QWidget()
-        v = QVBoxLayout(w)
+        content = QWidget()
+        v = QVBoxLayout(content)
         v.setContentsMargins(20, 16, 20, 16)
         v.setSpacing(16)
         cfg = config.load()
+
+        heading = QLabel("Settings")
+        heading.setStyleSheet(f"color: {theme.TEXT}; font-size: 18px; font-weight: 700;")
+        v.addWidget(heading)
+
+        dictation_title = QLabel("DICTATION")
+        dictation_title.setObjectName("sectionTitle")
+        v.addWidget(dictation_title)
 
         hotkey_row = QHBoxLayout()
         hotkey_row.addWidget(QLabel("Push-to-talk key:"))
@@ -819,16 +1083,164 @@ class MainWindow(QMainWindow):
         v.addWidget(self.hotkey_warning_label)
         self._update_hotkey_warning(current_keycode)
 
+        audio_title = QLabel("AUDIO")
+        audio_title.setObjectName("sectionTitle")
+        v.addWidget(audio_title)
+
+        input_row = QHBoxLayout()
+        input_row.addWidget(QLabel("Microphone:"))
+        self.input_device_combo = QComboBox()
+        self.input_device_combo.addItem("System default", userData="")
+        try:
+            for device_index, device in enumerate(sd.query_devices()):
+                if device.get("max_input_channels", 0) > 0:
+                    device_name = device.get("name", f"Input {device_index}")
+                    self.input_device_combo.addItem(device_name, userData=device_name)
+        except Exception:
+            logger.exception("couldn't enumerate microphone devices")
+        current_device = cfg.get("input_device", "")
+        if isinstance(current_device, int):
+            # Migrate the pre-existing index-based preference to a stable
+            # device name so reconnecting a headset cannot silently point at
+            # a different PortAudio index.
+            try:
+                current_device = sd.query_devices(current_device).get("name", "")
+            except Exception:
+                current_device = ""
+        idx = self.input_device_combo.findData(current_device)
+        if idx >= 0:
+            self.input_device_combo.setCurrentIndex(idx)
+        self.input_device_combo.currentIndexChanged.connect(self._on_input_device_changed)
+        input_row.addWidget(self.input_device_combo, stretch=1)
+        self.mic_test_btn = QPushButton("Test")
+        self.mic_test_btn.clicked.connect(self._test_microphone)
+        input_row.addWidget(self.mic_test_btn)
+        v.addLayout(input_row)
+
+        input_note = QLabel("Choose the microphone you will speak into. Chatter asks macOS for permission before using it; audio and transcripts stay on this Mac. Chatter will show an error if it opens a device but receives no audio.")
+        input_note.setWordWrap(True)
+        input_note.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+        v.addWidget(input_note)
+
+        language_row = QHBoxLayout()
+        language_row.addWidget(QLabel("Dictation language:"))
+        self.language_combo = QComboBox()
+        self.language_combo.addItem("English (recommended)", userData="en")
+        self.language_combo.addItem("Auto-detect", userData="")
+        current_language = cfg.get("language", "en")
+        language_idx = self.language_combo.findData(current_language)
+        if language_idx >= 0:
+            self.language_combo.setCurrentIndex(language_idx)
+        self.language_combo.currentIndexChanged.connect(self._on_language_changed)
+        language_row.addWidget(self.language_combo, stretch=1)
+        v.addLayout(language_row)
+
+        language_note = QLabel("English mode prevents short or quiet clips from being mistaken for another language. Choose Auto-detect only when you regularly dictate in multiple languages.")
+        language_note.setWordWrap(True)
+        language_note.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+        v.addWidget(language_note)
+
+        cleanup_title = QLabel("TRANSCRIPT CLEANUP")
+        cleanup_title.setObjectName("sectionTitle")
+        v.addWidget(cleanup_title)
+        cleanup_row = QHBoxLayout()
+        self.format_checkbox = QCheckBox("Clean up with local AI (parallel) ✨")
+        self.format_checkbox.setChecked(cfg.get("formatting_enabled", True))
+        self.format_checkbox.toggled.connect(self._on_formatting_toggled)
+        cleanup_row.addWidget(self.format_checkbox)
+        cleanup_row.addStretch(1)
+        v.addLayout(cleanup_row)
+        cleanup_note = QLabel(
+            "Uses the configured small local language model to repair punctuation, "
+            "fused words, pauses, and formatting. It runs on-device in the "
+            "background while Nemotron keeps streaming."
+        )
+        cleanup_note.setWordWrap(True)
+        cleanup_note.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+        v.addWidget(cleanup_note)
+
+        context_row = QHBoxLayout()
+        context_row.addWidget(QLabel("Writing context:"))
+        self.context_combo = QComboBox()
+        context_options = [
+            ("Automatic (foreground app)", "auto"),
+            ("Neutral dictation", "general"),
+            ("Professional email", "email"),
+            ("Notes / journal", "notes"),
+            ("Coding / AI prompt", "coding"),
+            ("Social / chat", "social"),
+        ]
+        for label, value in context_options:
+            self.context_combo.addItem(label, userData=value)
+        context_idx = self.context_combo.findData(cfg.get("cleanup_context_mode", "auto"))
+        if context_idx >= 0:
+            self.context_combo.setCurrentIndex(context_idx)
+        self.context_combo.currentIndexChanged.connect(self._on_context_changed)
+        context_row.addWidget(self.context_combo, stretch=1)
+        v.addLayout(context_row)
+        context_note = QLabel(
+            "Automatic uses only the foreground app and window title as a local hint; "
+            "it never reads the page or document. Choose an override when you want a "
+            "consistent style everywhere."
+        )
+        context_note.setWordWrap(True)
+        context_note.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+        v.addWidget(context_note)
+
+        speed_title = QLabel("CLEANUP SPEED")
+        speed_title.setObjectName("sectionTitle")
+        v.addWidget(speed_title)
+        speed_row = QHBoxLayout()
+        self.mtp_checkbox = QCheckBox("Try Gemma multi-token prediction (experimental)")
+        self.mtp_checkbox.setChecked(cfg.get("llama_mtp_enabled", False))
+        self.mtp_checkbox.setEnabled(self.format_checkbox.isChecked())
+        self.mtp_checkbox.toggled.connect(self._on_mtp_toggled)
+        speed_row.addWidget(self.mtp_checkbox)
+        speed_row.addStretch(1)
+        v.addLayout(speed_row)
+        speed_note = QLabel(
+            "Uses a matching local Gemma MTP head when available. It can reduce "
+            "decode time, but this build measured slower short cleanups on Apple "
+            "Silicon, so it is off by default and never changes Nemotron ASR."
+        )
+        speed_note.setWordWrap(True)
+        speed_note.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+        v.addWidget(speed_note)
+
+        permission_title = QLabel("PERMISSIONS")
+        permission_title.setObjectName("sectionTitle")
+        v.addWidget(permission_title)
+        self.permission_status_label = QLabel()
+        self.permission_status_label.setWordWrap(True)
+        self.permission_status_label.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+        v.addWidget(self.permission_status_label)
+        permission_row = QHBoxLayout()
+        mic_permissions_btn = QPushButton("Microphone")
+        mic_permissions_btn.clicked.connect(self._request_microphone_permission)
+        input_permissions_btn = QPushButton("Input Monitoring")
+        input_permissions_btn.clicked.connect(permissions.open_input_monitoring_settings)
+        accessibility_btn = QPushButton("Accessibility")
+        accessibility_btn.clicked.connect(permissions.open_accessibility_settings)
+        permission_row.addWidget(mic_permissions_btn)
+        permission_row.addWidget(input_permissions_btn)
+        permission_row.addWidget(accessibility_btn)
+        v.addLayout(permission_row)
+        self._refresh_permission_status()
+
         self.hotkey_status_label = QLabel("")
         self.hotkey_status_label.setStyleSheet(f"color: {theme.TEXT_DIM};")
         v.addWidget(self.hotkey_status_label)
 
-        note = QLabel("Push-to-talk's final pass and file transcription both use the model picked in the Files tab; formatting is toggled per-file there too.")
+        note = QLabel("Push-to-talk uses one local streaming ASR model from start to finish. File transcription uses the separate batch model. All audio, transcripts, and cleanup stay on this Mac.")
         note.setWordWrap(True)
         note.setStyleSheet(f"color: {theme.TEXT_DIM};")
         v.addWidget(note)
         v.addStretch(1)
-        return w
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(content)
+        return scroll
 
     def _update_hotkey_warning(self, keycode: int):
         warning = next((w for kc, _l, w in SUPPORTED_HOTKEYS if kc == keycode), None)
@@ -845,6 +1257,48 @@ class MainWindow(QMainWindow):
         self._update_live_hotkey_pill()
         self.hotkey_changed.emit()
 
+    def _on_input_device_changed(self, _index: int):
+        config.update(input_device=self.input_device_combo.currentData())
+
+    def _on_language_changed(self, _index: int):
+        config.update(language=self.language_combo.currentData())
+
+    def _on_context_changed(self, _index: int):
+        config.update(cleanup_context_mode=self.context_combo.currentData())
+
+    def _test_microphone(self):
+        self.mic_test_btn.setEnabled(False)
+        self.mic_test_btn.setText("Listening…")
+        self._mic_test_worker = MicTestWorker(self.input_device_combo.currentData())
+
+        def finished(ok: bool, message: str):
+            self.mic_test_btn.setEnabled(True)
+            self.mic_test_btn.setText("Test")
+            self.permission_status_label.setText(message)
+            self.permission_status_label.setStyleSheet(
+                f"color: {theme.DONE if ok else theme.PROCESSING}; font-size: 11px;"
+            )
+
+        self._mic_test_worker.finished.connect(finished)
+        self._mic_test_worker.start()
+
+    def _refresh_permission_status(self):
+        microphone_state = "Granted" if permissions.is_microphone_authorized() else "Needs permission"
+        input_state = "Granted" if permissions.input_monitoring_available() else "Needs permission"
+        accessibility_state = "Granted" if permissions.is_trusted() else "Needs permission"
+        self.permission_status_label.setText(
+            f"Microphone: {microphone_state}. "
+            f"Input Monitoring: {input_state}. Accessibility: {accessibility_state}. "
+            "All microphone audio and transcript processing stays on this Mac."
+        )
+
+    def _request_microphone_permission(self):
+        if not permissions.is_microphone_authorized():
+            permissions.request_microphone_access()
+            QTimer.singleShot(400, permissions.open_microphone_settings)
+        else:
+            permissions.open_microphone_settings()
+
     def _on_hotkey_status(self, status: str):
         if status == "Idle":
             self.hotkey_status_label.setText("")
@@ -853,8 +1307,20 @@ class MainWindow(QMainWindow):
 
     def _on_formatting_toggled(self, checked: bool):
         config.update(formatting_enabled=checked)
+        if hasattr(self, "mtp_checkbox"):
+            self.mtp_checkbox.setEnabled(checked)
         if checked:
             threading.Thread(target=self.formatter.warm_up, daemon=True).start()
+
+    def _on_mtp_toggled(self, checked: bool):
+        config.update(llama_mtp_enabled=checked)
+
+        def restart_formatter():
+            self.formatter.shutdown()
+            if checked and config.load().get("formatting_enabled", False):
+                self.formatter.warm_up()
+
+        threading.Thread(target=restart_formatter, daemon=True).start()
 
     # --- file transcription actions ---------------------------------------
 
@@ -903,7 +1369,7 @@ class MainWindow(QMainWindow):
         backend = self.backend_combo.currentText()
         self.worker = TranscribeWorker(
             model_path, backend, self.media_path,
-            self.formatter, self.format_checkbox.isChecked(),
+            self.formatter, config.load().get("formatting_enabled", True),
         )
         self.worker.progress.connect(lambda msg: self.status_label.setText(msg))
         self.worker.finished.connect(self.on_finished)
@@ -926,4 +1392,3 @@ class MainWindow(QMainWindow):
         self.transcribe_btn.setEnabled(True)
         self.open_btn.setEnabled(True)
         QMessageBox.critical(self, "Transcription failed", message)
-

@@ -85,6 +85,18 @@ QPushButton#primary:disabled {
     color: #8c7b73;
 }
 
+QPushButton#secondary {
+    background-color: transparent;
+    border: none;
+    color: #b9aaa3;
+    padding: 4px 8px;
+}
+
+QPushButton#secondary:hover {
+    color: #f5ede7;
+    background-color: transparent;
+}
+
 QComboBox, QTextEdit, QLineEdit, QTableWidget {
     background-color: #3b2922;
     border: 1px solid rgba(154, 128, 119, 0.3);

@@ -19,6 +19,9 @@ logger = logging.getLogger("chatter.correction_watcher")
 POLL_INTERVAL_MS = 1000
 QUIET_POLLS_BEFORE_SETTLED = 2  # ~2s of no further edits before treating a change as "final"
 WATCH_DURATION_MS = 60_000
+START_DELAY_MS = 300
+START_RETRY_MS = 250
+MAX_START_ATTEMPTS = 5
 # Below this character-similarity ratio, a word swap reads as a stylistic
 # preference (e.g. "good" -> "great") rather than the ASR mishearing a
 # similar-sounding word (e.g. "clawed" -> "Claude") — not something the
@@ -56,10 +59,20 @@ def _single_word_correction(old_text: str, new_text: str):
     if len(replacements) != 1 or other_changes:
         return None
     _, i1, i2, j1, j2 = replacements[0]
-    if i2 - i1 != 1 or j2 - j1 != 1:
+    if i2 - i1 != 1 or j2 - j1 not in (1, 2):
         return None
-    wrong, right = old_words[i1], new_words[j1]
+    wrong = old_words[i1]
+    right = " ".join(new_words[j1:j2])
     if wrong.lower() == right.lower():
+        return None
+
+    # A common harmless edit is inserting the missing boundary in a fused
+    # token ("goodmorning" -> "good morning"). Treat that as a dictionary
+    # correction too; the persisted replacement will repair future results
+    # before they are pasted.
+    if j2 - j1 == 2 and wrong.lower() == right.replace(" ", "").lower():
+        return wrong, right
+    if j2 - j1 != 1:
         return None
 
     similarity = difflib.SequenceMatcher(None, wrong.lower(), right.lower()).ratio()
@@ -87,14 +100,29 @@ class CorrectionWatcher(QObject):
         self._last_seen_text = None
         self._quiet_polls = 0
         self._elapsed_ms = 0
+        self._start_attempt = 0
 
     def watch_after_paste(self):
         """Call right after a successful paste — captures whatever field
         currently has focus (the one we just pasted into) as the baseline.
         """
         self._timer.stop()
+        self._focused_element = None
+        self._baseline_text = None
+        self._last_seen_text = None
+        self._start_attempt = 0
+        # Accessibility values often lag the simulated keystrokes by a few
+        # event-loop turns. Capturing immediately after paste was the reason
+        # the watcher silently skipped most corrections in Claude/Codex.
+        QTimer.singleShot(START_DELAY_MS, self._begin_watch)
+
+    def _begin_watch(self):
         focused, value = _get_focused_value()
         if focused is None or value is None:
+            self._start_attempt += 1
+            if self._start_attempt < MAX_START_ATTEMPTS:
+                QTimer.singleShot(START_RETRY_MS, self._begin_watch)
+                return
             logger.info("couldn't read the focused field after paste — skipping correction watch")
             return
         self._focused_element = focused

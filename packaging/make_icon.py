@@ -7,15 +7,23 @@ import subprocess
 import sys
 from pathlib import Path
 
-from PyQt6.QtCore import Qt
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
+from PyQt6.QtCore import QRectF, Qt
 from PyQt6.QtGui import QColor, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication
+
+from chatter.icon_art import draw_character
+from chatter import theme
 
 OUT_DIR = Path(__file__).parent
 ICONSET_DIR = OUT_DIR / "icon.iconset"
 ICNS_PATH = OUT_DIR / "icon.icns"
 
-SIZES = [16, 32, 64, 128, 256, 512, 1024]
+# iconutil accepts the standard macOS iconset sizes. The @2x render of
+# 512x512 supplies the 1024px source; extra 64/1024 base names make iconutil
+# reject the entire set on newer macOS releases.
+SIZES = [16, 32, 128, 256, 512]
 
 
 def draw(size: int) -> QPixmap:
@@ -24,18 +32,19 @@ def draw(size: int) -> QPixmap:
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     margin = size * 0.06
-    painter.setBrush(QColor("#5b8dee"))
+    painter.setBrush(QColor(theme.SURFACE))
     painter.setPen(Qt.PenStyle.NoPen)
     painter.drawRoundedRect(
-        int(margin), int(margin), int(size - 2 * margin), int(size - 2 * margin),
+        QRectF(margin, margin, size - 2 * margin, size - 2 * margin),
         size * 0.22, size * 0.22,
     )
-    painter.setPen(QColor("white"))
-    font = painter.font()
-    font.setPointSizeF(size * 0.5)
-    font.setBold(True)
-    painter.setFont(font)
-    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "C")
+    painter.save()
+    # Keep the bundle icon on the exact same shared geometry and scale as the
+    # Dock icon. The previous smaller, lower placement made the character
+    # look unrelated and visually under-filled beside other apps.
+    painter.translate(size * 0.05, size * 0.005)
+    draw_character(painter, size * 0.90)
+    painter.restore()
     painter.end()
     return pixmap
 
@@ -43,6 +52,8 @@ def draw(size: int) -> QPixmap:
 def main():
     app = QApplication(sys.argv)
     ICONSET_DIR.mkdir(exist_ok=True)
+    for stale in ICONSET_DIR.glob("*.png"):
+        stale.unlink()
 
     for size in SIZES:
         draw(size).save(str(ICONSET_DIR / f"icon_{size}x{size}.png"))

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Chatter is a local-first voice layer for your Mac.">
+  <title>Chatter — Your voice, locally.</title>
+  <style>
+    :root { --bg:#19110e; --panel:#281a15; --panel-2:#36231c; --text:#f8eee8; --muted:#bba9a0; --accent:#f07f35; --line:#6d4b3c; }
+    * { box-sizing:border-box; }
+    body { margin:0; color:var(--text); background:radial-gradient(circle at 50% -10%,#42271b 0,var(--bg) 48%); font:16px/1.55 Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    a { color:inherit; }
+    .wrap { width:min(1080px,calc(100% - 40px)); margin:0 auto; }
+    nav { display:flex; justify-content:space-between; align-items:center; padding:24px 0; }
+    .brand { display:flex; align-items:center; gap:10px; font-weight:750; letter-spacing:-.02em; }
+    .brand-mark { width:30px; height:30px; border-radius:9px; background:#000; display:grid; place-items:center; }
+    .brand-mark svg { width:21px; height:24px; }
+    nav .links { display:flex; gap:20px; color:var(--muted); font-size:14px; }
+    .hero { display:grid; grid-template-columns:1.08fr .92fr; gap:52px; align-items:center; padding:76px 0 90px; }
+    .eyebrow { color:var(--accent); font-weight:750; letter-spacing:.12em; font-size:12px; text-transform:uppercase; }
+    h1 { margin:14px 0 18px; max-width:650px; font-size:clamp(44px,7vw,76px); line-height:.98; letter-spacing:-.065em; }
+    h2 { margin:0 0 12px; font-size:28px; letter-spacing:-.035em; }
+    p { color:var(--muted); max-width:630px; }
+    .actions { display:flex; flex-wrap:wrap; gap:12px; margin-top:28px; }
+    .button { display:inline-flex; align-items:center; justify-content:center; min-height:46px; padding:0 18px; border-radius:12px; text-decoration:none; font-weight:750; background:var(--accent); color:#24130d; }
+    .button.secondary { color:var(--text); background:var(--panel-2); border:1px solid var(--line); }
+    .note { margin-top:14px; color:#8f7b72; font-size:13px; }
+    .notch { background:#000; border-radius:0 0 20px 20px; min-height:260px; padding:26px; display:flex; align-items:center; justify-content:center; box-shadow:0 24px 70px #0008; }
+    .hud { width:min(100%,390px); border-radius:0 0 22px 22px; background:#000; padding:18px 22px 22px; display:flex; align-items:center; gap:16px; box-shadow:0 0 0 1px #292929; }
+    .hud-copy small { color:#a69b95; display:block; font-size:12px; }
+    .hud-copy strong { display:block; margin-top:2px; font-size:18px; }
+    .mascot { width:48px; flex:0 0 48px; }
+    .mascot svg { width:100%; height:auto; overflow:visible; }
+    .mascot .body { fill:var(--accent); }
+    .mascot .face { stroke:#321c12; fill:none; stroke-linecap:round; stroke-width:3; }
+    .mascot .ear { fill:#c85609; }
+    .section { padding:28px 0 92px; }
+    .section-intro { margin-top:0; }
+    .grid { display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-top:28px; }
+    .card { background:#ffffff08; border:1px solid #ffffff16; border-radius:18px; padding:22px; }
+    .card b { display:block; margin-bottom:8px; }
+    .card p { margin:0; font-size:14px; }
+    .model-strip { display:flex; flex-wrap:wrap; gap:10px; margin-top:20px; }
+    .chip { background:var(--panel-2); border:1px solid var(--line); border-radius:999px; padding:8px 12px; color:#e6d6ce; font-size:13px; }
+    footer { border-top:1px solid #ffffff14; padding:24px 0 44px; color:#8f7b72; font-size:13px; }
+    @media (max-width:760px) { .hero { grid-template-columns:1fr; padding:48px 0 60px; } .grid { grid-template-columns:1fr; } nav .links { gap:10px; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav>
+      <a class="brand" href=".">
+        <span class="brand-mark"><svg viewBox="0 0 100 110" aria-hidden="true"><path class="ear" d="M29 33c-9-8-9-20 0-23 9 4 12 12 10 23zM71 33c9-8 9-20 0-23-9 4-12 12-10 23z"/><path class="body" d="M18 70c0-18 12-25 32-25s32 7 32 25c0 22-13 32-32 32S18 92 18 70z"/><path class="face" d="M39 74h.1M61 74h.1M39 84c7 7 15 7 22 0"/></svg></span>
+        <span>Chatter</span>
+      </a>
+      <div class="links"><a href="https://github.com/ajaitly11/Chatter">GitHub</a><a href="model-guide.md">Model guide</a></div>
+    </nav>
+
+    <main>
+      <section class="hero">
+        <div>
+          <div class="eyebrow">Local voice layer for macOS</div>
+          <h1>Your voice, locally.</h1>
+          <p>Chatter turns a push-to-talk key into fast, private dictation. Live transcription, optional AI cleanup, and the playful notch HUD all run on your Mac.</p>
+          <div class="actions">
+            <a class="button" href="https://github.com/ajaitly11/Chatter/releases/latest/download/Chatter-macOS-arm64.zip">Download for Apple Silicon</a>
+            <a class="button secondary" href="https://github.com/ajaitly11/Chatter#readme">Read the setup guide</a>
+          </div>
+          <div class="note">macOS arm64 · models are downloaded separately · no cloud account required</div>
+        </div>
+        <div class="notch" aria-label="Chatter notch HUD preview">
+          <div class="hud">
+            <div class="mascot"><svg viewBox="0 0 100 110" aria-hidden="true"><path class="ear" d="M29 33c-9-8-9-20 0-23 9 4 12 12 10 23zM71 33c9-8 9-20 0-23-9 4-12 12-10 23z"/><path class="body" d="M18 70c0-18 12-25 32-25s32 7 32 25c0 22-13 32-32 32S18 92 18 70z"/><path class="face" d="M39 74h.1M61 74h.1M39 84c7 7 15 7 22 0"/></svg></div>
+            <div class="hud-copy"><small>Listening locally</small><strong>Say what you mean.</strong></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="eyebrow">The simple version</div>
+        <h2>One voice path. Optional polish.</h2>
+        <p class="section-intro">Chatter uses one streaming ASR model from the first syllable through the final transcript. A small local language model is an optional formatting layer, not a second transcription pass.</p>
+        <div class="grid">
+          <article class="card"><b>Hold to talk</b><p>Press the hotkey, see the HUD immediately, and watch the newest words arrive while you speak.</p></article>
+          <article class="card"><b>Write for the moment</b><p>Email, notes, coding prompts, and social posts get lightweight context-aware formatting when cleanup is enabled.</p></article>
+          <article class="card"><b>Keep your data here</b><p>Audio, transcripts, dictionary corrections, and cleanup inputs stay on this Mac.</p></article>
+        </div>
+      </section>
+
+      <section class="section">
+        <div class="eyebrow">Start with the recommended path</div>
+        <h2>Download less. Understand more.</h2>
+        <p>Install Chatter, grant its three macOS permissions, then choose models based on the memory in your Mac. You only need a streaming ASR model to begin.</p>
+        <div class="model-strip"><span class="chip">Live dictation · Nemotron 3.5 streaming</span><span class="chip">Optional cleanup · small 2B–4B instruct GGUF</span><span class="chip">File work · Whisper or Parakeet batch model</span></div>
+        <div class="actions"><a class="button" href="model-guide.md">Choose your models</a><a class="button secondary" href="https://github.com/ajaitly11/Chatter/releases">All releases</a></div>
+      </section>
+    </main>
+    <footer>Chatter is an open local-first macOS project by <a href="https://github.com/ajaitly11">ajaitly11</a>. Built for a quieter, more capable dictation flow.</footer>
+  </div>
+</body>
+</html>
