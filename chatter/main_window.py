@@ -12,6 +12,7 @@ import objc
 import sounddevice as sd
 from PyQt6.QtCore import (
     QEasingCurve,
+    QRectF,
     Qt,
     QPropertyAnimation,
     QThread,
@@ -27,6 +28,7 @@ from PyQt6.QtWidgets import (
     QDialog,
     QFileDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -49,6 +51,7 @@ from PyQt6.QtWidgets import (
 from . import config
 from . import dictionary
 from . import history
+from . import insights
 from . import llama_runtime
 from . import permissions
 from .audio_capture import StreamingMicRecorder
@@ -496,6 +499,295 @@ class _ModelGuideDialog(QDialog):
         v.addWidget(close_btn, alignment=Qt.AlignmentFlag.AlignRight)
 
 
+class _InsightBarChart(QWidget):
+    """Small, quiet bar chart for local daily word volume."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._values: list[tuple[object, int]] = []
+        self.setMinimumHeight(136)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+    def set_values(self, values):
+        self._values = list(values)
+        self.update()
+
+    def paintEvent(self, event):
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        width = max(1, self.width() - 12)
+        baseline = self.height() - 26
+        chart_height = max(20, baseline - 12)
+        values = self._values
+        max_value = max((value for _day, value in values), default=0)
+
+        if not values:
+            painter.setPen(QColor(theme.TEXT_DIM))
+            painter.drawText(QRectF(0, 34, self.width(), 24), Qt.AlignmentFlag.AlignCenter, "Your first dictation will appear here.")
+            return
+
+        step = width / max(len(values), 1)
+        bar_width = max(4.0, min(24.0, step * 0.62))
+        for index, (day, value) in enumerate(values):
+            x = 6 + index * step + (step - bar_width) / 2
+            bar_height = (value / max_value * chart_height) if max_value else 3
+            color = QColor(theme.ACTIVE if value else theme.SURFACE2)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawRoundedRect(QRectF(x, baseline - bar_height, bar_width, bar_height), 4, 4)
+
+            painter.setPen(QColor(theme.TEXT_DIM))
+            label = day.strftime("%a") if len(values) <= 7 else day.strftime("%d")
+            painter.drawText(
+                QRectF(x - 4, baseline + 7, bar_width + 8, 18),
+                Qt.AlignmentFlag.AlignCenter,
+                label,
+            )
+
+
+class InsightsPanel(QWidget):
+    """A local, Chatter-specific activity dashboard.
+
+    The panel is intentionally a view over history rather than a new data
+    collection system. That keeps the privacy promise easy to understand:
+    deleting History also removes the source used for these summaries.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._metric_values: dict[str, QLabel] = {}
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(20, 16, 20, 16)
+        outer.setSpacing(12)
+
+        header = QHBoxLayout()
+        title_col = QVBoxLayout()
+        title = QLabel("Insights")
+        title.setStyleSheet(f"color: {theme.TEXT}; font-size: 20px; font-weight: 700;")
+        title_col.addWidget(title)
+        subtitle = QLabel("A private view of how your voice moves through Chatter — stored on this Mac only.")
+        subtitle.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 12px;")
+        subtitle.setWordWrap(True)
+        title_col.addWidget(subtitle)
+        header.addLayout(title_col, stretch=1)
+
+        self.range_combo = QComboBox()
+        self.range_combo.addItem("This week", userData=7)
+        self.range_combo.addItem("Last 30 days", userData=30)
+        self.range_combo.addItem("All time", userData=None)
+        self.range_combo.setCurrentIndex(1)
+        self.range_combo.currentIndexChanged.connect(self.refresh)
+        header.addWidget(self.range_combo, alignment=Qt.AlignmentFlag.AlignTop)
+        refresh_button = QPushButton("Refresh")
+        refresh_button.clicked.connect(self.refresh)
+        header.addWidget(refresh_button, alignment=Qt.AlignmentFlag.AlignTop)
+        outer.addLayout(header)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        content = QWidget()
+        body = QVBoxLayout(content)
+        body.setContentsMargins(0, 0, 0, 4)
+        body.setSpacing(12)
+
+        metrics = QGridLayout()
+        metrics.setHorizontalSpacing(10)
+        metrics.setVerticalSpacing(10)
+        metric_specs = [
+            ("words", "WORDS DICTATED", theme.ACTIVE),
+            ("pace", "SPEAKING PACE", theme.PROCESSING),
+            ("today", "TODAY", theme.DONE),
+            ("dictionary", "PERSONAL VOCABULARY", theme.MASCOT_DARK),
+        ]
+        for index, (key, label, accent) in enumerate(metric_specs):
+            card, value_label = self._metric_card(label, accent)
+            metrics.addWidget(card, index // 2, index % 2)
+            self._metric_values[key] = value_label
+        body.addLayout(metrics)
+
+        self.empty_hint = _card()
+        empty_layout = QHBoxLayout(self.empty_hint)
+        empty_layout.setContentsMargins(14, 10, 14, 10)
+        empty_text = QLabel("Your first local dictation will turn this into a useful personal snapshot. Nothing is uploaded to create these insights.")
+        empty_text.setWordWrap(True)
+        empty_text.setStyleSheet(f"color: {theme.TEXT_DIM};")
+        empty_layout.addWidget(empty_text)
+        body.addWidget(self.empty_hint)
+
+        rhythm_card = _card()
+        rhythm_layout = QVBoxLayout(rhythm_card)
+        rhythm_layout.setContentsMargins(14, 12, 14, 12)
+        rhythm_header = QHBoxLayout()
+        rhythm_title = QLabel("Your rhythm")
+        rhythm_title.setStyleSheet(f"color: {theme.TEXT}; font-size: 16px; font-weight: 700;")
+        rhythm_header.addWidget(rhythm_title)
+        rhythm_header.addStretch(1)
+        rhythm_note = QLabel("Words by day")
+        rhythm_note.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+        rhythm_header.addWidget(rhythm_note)
+        rhythm_layout.addLayout(rhythm_header)
+        self.daily_chart = _InsightBarChart()
+        rhythm_layout.addWidget(self.daily_chart)
+        body.addWidget(rhythm_card)
+
+        lower = QGridLayout()
+        lower.setHorizontalSpacing(10)
+        lower.setVerticalSpacing(10)
+
+        context_card = _card()
+        context_layout = QVBoxLayout(context_card)
+        context_layout.setContentsMargins(14, 12, 14, 12)
+        context_title = QLabel("Where your voice lands")
+        context_title.setStyleSheet(f"color: {theme.TEXT}; font-size: 16px; font-weight: 700;")
+        context_layout.addWidget(context_title)
+        context_note = QLabel("Foreground apps are remembered locally as a writing-context hint.")
+        context_note.setWordWrap(True)
+        context_note.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+        context_layout.addWidget(context_note)
+        self.context_rows = QVBoxLayout()
+        self.context_rows.setSpacing(8)
+        context_layout.addLayout(self.context_rows)
+        context_layout.addStretch(1)
+        lower.addWidget(context_card, 0, 0)
+
+        consistency_card = _card()
+        consistency_layout = QVBoxLayout(consistency_card)
+        consistency_layout.setContentsMargins(14, 12, 14, 12)
+        consistency_title = QLabel("Consistency")
+        consistency_title.setStyleSheet(f"color: {theme.TEXT}; font-size: 16px; font-weight: 700;")
+        consistency_layout.addWidget(consistency_title)
+        self.consistency_values = {}
+        for key, label in (
+            ("active", "Active days"),
+            ("current", "Current streak"),
+            ("longest", "Longest streak"),
+            ("average", "Words per dictation"),
+        ):
+            row = QHBoxLayout()
+            name = QLabel(label)
+            name.setStyleSheet(f"color: {theme.TEXT_DIM};")
+            value = QLabel("0")
+            value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            value.setStyleSheet(f"color: {theme.TEXT}; font-weight: 700;")
+            row.addWidget(name)
+            row.addWidget(value)
+            consistency_layout.addLayout(row)
+            self.consistency_values[key] = value
+        consistency_layout.addStretch(1)
+        lower.addWidget(consistency_card, 0, 1)
+        body.addLayout(lower)
+
+        impact_card = _card()
+        impact_layout = QVBoxLayout(impact_card)
+        impact_layout.setContentsMargins(14, 12, 14, 12)
+        impact_title = QLabel("Local pipeline")
+        impact_title.setStyleSheet(f"color: {theme.TEXT}; font-size: 16px; font-weight: 700;")
+        impact_layout.addWidget(impact_title)
+        impact_note = QLabel("A small operational view of the features running on your Mac.")
+        impact_note.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+        impact_layout.addWidget(impact_note)
+        impact_grid = QGridLayout()
+        impact_grid.setHorizontalSpacing(18)
+        self.impact_values = {}
+        for index, (key, label) in enumerate(
+            (
+                ("cleanup", "Cleanup enabled"),
+                ("pasted", "Pasted successfully"),
+                ("latency", "Average finishing"),
+            )
+        ):
+            column = QVBoxLayout()
+            name = QLabel(label.upper())
+            name.setObjectName("sectionTitle")
+            value = QLabel("0")
+            value.setStyleSheet(f"color: {theme.TEXT}; font-size: 17px; font-weight: 700;")
+            column.addWidget(name)
+            column.addWidget(value)
+            impact_grid.addLayout(column, 0, index)
+            self.impact_values[key] = value
+        impact_layout.addLayout(impact_grid)
+        body.addWidget(impact_card)
+        body.addStretch(1)
+
+        scroll.setWidget(content)
+        outer.addWidget(scroll, stretch=1)
+        self.refresh()
+
+    @staticmethod
+    def _metric_card(label: str, accent: str) -> tuple[QFrame, QLabel]:
+        card = _card()
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(14, 12, 14, 12)
+        eyebrow = QLabel(label)
+        eyebrow.setObjectName("sectionTitle")
+        eyebrow.setStyleSheet(f"color: {accent}; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;")
+        layout.addWidget(eyebrow)
+        value = QLabel("0")
+        value.setStyleSheet(f"color: {theme.TEXT}; font-size: 24px; font-weight: 700;")
+        layout.addWidget(value)
+        return card, value
+
+    def _set_context_rows(self, contexts: tuple[tuple[str, int], ...]):
+        while self.context_rows.count():
+            item = self.context_rows.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        if not contexts:
+            empty = QLabel("No app context recorded yet")
+            empty.setStyleSheet(f"color: {theme.TEXT_DIM};")
+            self.context_rows.addWidget(empty)
+            return
+        maximum = max(count for _label, count in contexts)
+        for label, count in contexts:
+            row = QVBoxLayout()
+            top = QHBoxLayout()
+            name = QLabel(label)
+            name.setStyleSheet(f"color: {theme.TEXT};")
+            count_label = QLabel(f"{count} session{'s' if count != 1 else ''}")
+            count_label.setStyleSheet(f"color: {theme.TEXT_DIM}; font-size: 11px;")
+            top.addWidget(name)
+            top.addStretch(1)
+            top.addWidget(count_label)
+            row.addLayout(top)
+            progress = QProgressBar()
+            progress.setRange(0, maximum)
+            progress.setValue(count)
+            progress.setTextVisible(False)
+            progress.setFixedHeight(7)
+            row.addWidget(progress)
+            self.context_rows.addLayout(row)
+
+    def refresh(self):
+        days = self.range_combo.currentData()
+        summary = insights.summarize(
+            history.load(kind="dictation"),
+            dictionary_entries=len(config.load().get("custom_dictionary", {})),
+            days=days,
+        )
+        self._metric_values["words"].setText(f"{summary.total_words:,}")
+        self._metric_values["pace"].setText(f"{summary.average_wpm:,} WPM" if summary.average_wpm else "—")
+        self._metric_values["today"].setText(f"{summary.words_today:,}")
+        self._metric_values["dictionary"].setText(str(summary.dictionary_entries))
+        self.empty_hint.setVisible(summary.dictations == 0)
+        self.daily_chart.set_values(summary.daily_words)
+        self._set_context_rows(summary.contexts)
+
+        self.consistency_values["active"].setText(str(summary.active_days))
+        self.consistency_values["current"].setText(f"{summary.current_streak} day{'s' if summary.current_streak != 1 else ''}")
+        self.consistency_values["longest"].setText(f"{summary.longest_streak} day{'s' if summary.longest_streak != 1 else ''}")
+        self.consistency_values["average"].setText(f"{summary.average_words:,}")
+
+        self.impact_values["cleanup"].setText(str(summary.cleanup_sessions))
+        paste_rate = round(summary.pasted_count / summary.dictations * 100) if summary.dictations else 0
+        self.impact_values["pasted"].setText(f"{paste_rate}%")
+        self.impact_values["latency"].setText(
+            f"{summary.average_processing_ms} ms" if summary.average_processing_ms is not None else "—"
+        )
+
+
 class MainWindow(QMainWindow):
     hotkey_changed = pyqtSignal()  # push-to-talk key was changed; listener needs a restart
 
@@ -523,7 +815,10 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._build_models_tab(), "Models")
         self.tabs.addTab(self._build_dictionary_tab(), "Dictionary")
         self.tabs.addTab(self._build_history_tab(), "History")
-        self.tabs.addTab(self._build_settings_tab(), "Settings")
+        self.insights_tab = InsightsPanel()
+        self.tabs.addTab(self.insights_tab, "Insights")
+        self.settings_tab = self._build_settings_tab()
+        self.tabs.addTab(self.settings_tab, "Settings")
         self.setCentralWidget(self.tabs)
         # The first underline can be painted before QTabBar has its final
         # geometry. Synchronize once after the window is laid out so Live
@@ -533,6 +828,10 @@ class MainWindow(QMainWindow):
         self.refresh_models()
         self._reload_files_history()
         self._reload_dictation_history()
+
+    def _reload_insights(self):
+        if hasattr(self, "insights_tab"):
+            self.insights_tab.refresh()
 
     # --- Live Dictation tab ---------------------------------------------
 

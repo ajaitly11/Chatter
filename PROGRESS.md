@@ -248,3 +248,20 @@ being something worth open-sourcing rather than a vibe-coded prototype.
   them.
 - **MTP acceptance** remains optional and machine-specific: compare a short
   cleanup phrase with the toggle off/on before considering it a default.
+
+### Local Insights dashboard
+- Added an in-app **Insights** tab that summarizes Chatter's own dictation
+  history without sending analytics anywhere: words dictated, speaking pace,
+  today's volume, personal vocabulary, daily rhythm, active-day streaks,
+  foreground-app context, cleanup usage, paste success, and average finishing
+  time.
+- Added a small time-range selector (this week, last 30 days, all time) and a
+  refresh action. The dashboard is a view over the existing local history and
+  dictionary files, so clearing history also removes the source for these
+  summaries.
+- New dictation records retain only the local metadata needed for those
+  summaries: word count, captured audio duration, context app/mode, cleanup
+  usage, paste result, and pipeline finishing time. No window contents or
+  transcript analytics leave the Mac.
+- Added the Insights destination to the Chatter menu-bar/native application
+  menu and unit coverage for the summary calculations.

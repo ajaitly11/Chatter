@@ -3,7 +3,7 @@ import sys
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QLockFile, QRectF, Qt
+from PyQt6.QtCore import QLockFile, QRectF, Qt, QTimer
 from PyQt6.QtGui import QAction, QActionGroup, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
 import sounddevice as sd
@@ -143,6 +143,25 @@ def run():
         if config.load().get("push_to_talk_enabled", True) and permissions_ready():
             hotkey.start()
 
+    # macOS can update TCC while the onboarding or System Settings window is
+    # open. Polling lets the listener come alive immediately after the user
+    # enables the final switch; no quit/relaunch or second setup ceremony is
+    # required.
+    permission_poller = QTimer()
+    permission_poller.setInterval(1500)
+
+    def recover_hotkey_when_ready():
+        if (
+            config.load().get("push_to_talk_enabled", True)
+            and permissions_ready()
+            and not hotkey.listener_running
+        ):
+            logger.info("all Chatter permissions are ready; starting push-to-talk listener")
+            hotkey.start()
+
+    permission_poller.timeout.connect(recover_hotkey_when_ready)
+    permission_poller.start()
+
     window.hotkey_changed.connect(restart_hotkey_listener)
 
     _PROCESSING_STATES = {"Finishing audio…", "Finalizing…", "Transcribing…", "Cleaning up…", "Still finishing up…"}
@@ -201,6 +220,7 @@ def run():
         flash_hud("done", phrase="Done!")
         window.set_live_state("done", label="Done!")
         window._reload_dictation_history()
+        window._reload_insights()
         if pasted:
             correction_watcher.watch_after_paste()
 
@@ -208,6 +228,7 @@ def run():
 
     def on_correction_learned(wrong: str, right: str):
         window._reload_dictionary_table()
+        window._reload_insights()
 
     correction_watcher.correction_learned.connect(on_correction_learned)
     hotkey.error.connect(lambda msg: flash_hud("error", _truncate(msg, 60), delay_ms=3200))
@@ -226,12 +247,22 @@ def run():
 
     def open_settings():
         window.show()
-        window.tabs.setCurrentIndex(5)
+        window.tabs.setCurrentWidget(window.settings_tab)
         window.raise_()
         window.activateWindow()
 
     settings_action.triggered.connect(open_settings)
     menu.addAction(settings_action)
+
+    def open_insights():
+        window.show()
+        window.tabs.setCurrentWidget(window.insights_tab)
+        window.raise_()
+        window.activateWindow()
+
+    insights_action = QAction("Open Insights")
+    insights_action.triggered.connect(open_insights)
+    menu.addAction(insights_action)
 
     def refresh_permissions():
         """Refresh TCC state and start the listener when setup is complete."""
@@ -396,8 +427,33 @@ def run():
     quit_action.triggered.connect(do_quit)
     menu.addAction(quit_action)
 
+    # Keep the same commands available in the native macOS application menu.
+    # The status-item menu is useful when Chatter is in the background, but a
+    # user should not have to discover a tiny icon before they can finish
+    # setup or open Settings.
+    native_menu = window.menuBar()
+    native_menu.setNativeMenuBar(True)
+    chatter_menu = native_menu.addMenu("Chatter")
+    chatter_menu.addAction(open_action)
+    chatter_menu.addAction(insights_action)
+    chatter_menu.addAction(settings_action)
+    chatter_menu.addAction(finish_setup_action)
+    chatter_menu.addSeparator()
+    chatter_menu.addAction(permission_status_action)
+    chatter_menu.addAction(check_permissions_action)
+    chatter_menu.addAction(ptt_action)
+    chatter_menu.addAction(cleanup_action)
+    chatter_menu.addSeparator()
+    chatter_menu.addAction(quit_action)
+    chatter_menu.aboutToShow.connect(refresh_menu_state)
+
     tray.setContextMenu(menu)
+    logger.info(
+        "menu bar status item: available=%s",
+        QSystemTrayIcon.isSystemTrayAvailable(),
+    )
     tray.show()
+    tray.setVisible(True)
 
     # Accessibility trust is tied to *this* launching bundle's identity
     # (Chatter.app vs. a bare `python main.py` run from Terminal each get
@@ -434,7 +490,12 @@ def run():
     if cfg.get("push_to_talk_enabled", True) and permissions_ready():
         hotkey.start()
     elif cfg.get("push_to_talk_enabled", True):
-        logger.warning("push-to-talk listener not started: Chatter permissions are incomplete")
+        logger.warning(
+            "push-to-talk listener not started: mic=%s input_monitoring=%s accessibility=%s",
+            permissions.is_microphone_authorized(),
+            permissions.input_monitoring_available(),
+            permissions.is_trusted(),
+        )
 
     def warm_up_models():
         backend = config.load().get("backend", "auto")
