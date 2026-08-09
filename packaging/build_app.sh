@@ -61,7 +61,22 @@ plutil -insert NSHighResolutionCapable -bool true "$PLIST" 2>/dev/null || true
 # Give the TCC/privacy database a stable bundle identifier. PyInstaller's
 # default ad-hoc identifier is the executable name, which makes permission
 # entries less predictable after app moves or rebuilds.
-codesign --force --deep --sign - --identifier com.chatter.app "$APP_DIR"
+#
+# Sign with a local self-signed "Chatter Local Dev" certificate (see
+# packaging/setup_dev_cert.sh) rather than ad-hoc (-s -). Ad-hoc signatures
+# have no stable identity, so macOS ties Accessibility/Microphone/Input
+# Monitoring grants to the exact binary hash — every rebuild silently
+# invalidates permissions the user already granted, even though System
+# Settings still shows the switch on. Signing with a persistent certificate
+# gives TCC a stable designated requirement that survives rebuilds. Falls
+# back to ad-hoc if the dev cert has not been created yet.
+CODESIGN_IDENTITY="Chatter Local Dev"
+if ! security find-identity -v -p codesigning | grep -q "$CODESIGN_IDENTITY"; then
+    echo "warning: '$CODESIGN_IDENTITY' certificate not found; falling back to ad-hoc signing." >&2
+    echo "         Run packaging/setup_dev_cert.sh once to make permission grants survive rebuilds." >&2
+    CODESIGN_IDENTITY="-"
+fi
+codesign --force --deep --sign "$CODESIGN_IDENTITY" --identifier com.chatter.app "$APP_DIR"
 
 echo "Built $APP_DIR"
 echo "Executable: $APP_DIR/Contents/MacOS/Chatter"

@@ -81,8 +81,20 @@ def accessibility_status() -> tuple[bool, bool]:
 
 
 def is_trusted() -> bool:
+    """Return whether this bundle currently has Accessibility trust.
+
+    The plain checks in ``accessibility_status()`` can stay stale inside an
+    already-running process even after the user flips the switch on in
+    System Settings — macOS does not always push the update to a process
+    that asked before the toggle changed. Falling back to the prompting
+    variant forces a fresh read so a long-lived process (the main app, not
+    just onboarding) notices the grant without requiring the user to quit
+    and relaunch Chatter.
+    """
     ax_trusted, post_event = accessibility_status()
-    return ax_trusted or post_event
+    if ax_trusted or post_event:
+        return True
+    return request_trust()
 
 
 def request_trust() -> bool:
