@@ -10,20 +10,70 @@ permissions:
 jobs:
   macos-arm64:
     runs-on: macos-14
+    env:
+      KEYCHAIN_PATH: ${{ github.workspace }}/chatter-release.keychain-db
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
+
+      # Gives this CI runner the same kind of stable signing identity that
+      # packaging/setup_dev_cert.sh gives a local checkout. Without it, every
+      # release would be ad-hoc signed with a fresh random identity, and
+      # updating Chatter would silently reset every user's Accessibility/
+      # Microphone/Input Monitoring grants — the same bug fixed for local
+      # builds, but hitting real users instead. The certificate and its
+      # import password live only in this repo's encrypted Actions secrets;
+      # the private key touches disk only inside this ephemeral runner's
+      # temp keychain, which is deleted at the end of the job regardless of
+      # outcome.
+      - name: Import release signing certificate
+        env:
+          CERT_P12_B64: ${{ secrets.CHATTER_RELEASE_CERT_P12 }}
+          CERT_PASSWORD: ${{ secrets.CHATTER_RELEASE_CERT_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
+          CERT_PATH="$RUNNER_TEMP/chatter-release-cert.p12"
+
+          echo "$CERT_P12_B64" | base64 --decode -o "$CERT_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CERT_PASSWORD" \
+              -T /usr/bin/codesign -T /usr/bin/security
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+              -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" \
+              "$(security list-keychains -d user | sed 's/"//g' | xargs)"
+
+          rm -f "$CERT_PATH"
+
       - name: Build the app
+        env:
+          CHATTER_CODESIGN_IDENTITY: "Chatter Release"
         run: |
           python -m venv venv
           venv/bin/python -m pip install --upgrade pip
           venv/bin/python -m pip install -r requirements.txt
           ./packaging/build_app.sh
-      - name: Archive the app
-        run: ditto -c -k --sequesterRsrc --keepParent Chatter.app Chatter-macOS-arm64.zip
+
+      - name: Create DMG
+        run: |
+          set -euo pipefail
+          STAGING="$RUNNER_TEMP/dmg-staging"
+          mkdir -p "$STAGING"
+          cp -R Chatter.app "$STAGING/"
+          ln -s /Applications "$STAGING/Applications"
+          hdiutil create -volname "Chatter" -srcfolder "$STAGING" -ov -format UDZO Chatter-macOS-arm64.dmg
+
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" Chatter-macOS-arm64.zip --title "Chatter $GITHUB_REF_NAME" --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" Chatter-macOS-arm64.dmg --title "Chatter $GITHUB_REF_NAME" --generate-notes
+
+      - name: Remove temporary keychain
+        if: always()
+        run: security delete-keychain "$KEYCHAIN_PATH" || true

@@ -70,7 +70,10 @@ plutil -insert NSHighResolutionCapable -bool true "$PLIST" 2>/dev/null || true
 # Settings still shows the switch on. Signing with a persistent certificate
 # gives TCC a stable designated requirement that survives rebuilds. Falls
 # back to ad-hoc if the dev cert has not been created yet.
-CODESIGN_IDENTITY="Chatter Local Dev"
+#
+# CHATTER_CODESIGN_IDENTITY lets a caller (CI) point this at a different
+# imported identity — e.g. "Chatter Release" — instead of the local dev one.
+CODESIGN_IDENTITY="${CHATTER_CODESIGN_IDENTITY:-Chatter Local Dev}"
 if ! security find-identity -v -p codesigning | grep -q "$CODESIGN_IDENTITY"; then
     echo "warning: '$CODESIGN_IDENTITY' certificate not found; falling back to ad-hoc signing." >&2
     echo "         Run packaging/setup_dev_cert.sh once to make permission grants survive rebuilds." >&2
