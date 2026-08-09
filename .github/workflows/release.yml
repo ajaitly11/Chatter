@@ -49,7 +49,16 @@ jobs:
           security list-keychains -d user -s "$KEYCHAIN_PATH" \
               "$(security list-keychains -d user | sed 's/"//g' | xargs)"
 
-          rm -f "$CERT_PATH"
+          # Importing the identity is not enough — `security find-identity -v`
+          # (what build_app.sh checks) only lists identities it considers
+          # "valid", and a self-signed cert with no trusted root needs to be
+          # explicitly marked as trusted for code signing before it counts.
+          CERT_ONLY_PATH="$RUNNER_TEMP/chatter-release-cert.crt"
+          openssl pkcs12 -in "$CERT_PATH" -clcerts -nokeys -passin "pass:$CERT_PASSWORD" -legacy \
+              | openssl x509 -out "$CERT_ONLY_PATH"
+          security add-trusted-cert -p codeSign -k "$KEYCHAIN_PATH" "$CERT_ONLY_PATH"
+
+          rm -f "$CERT_PATH" "$CERT_ONLY_PATH"
 
       - name: Build the app
         env:
