@@ -227,7 +227,7 @@ class OnboardingWindow(QDialog):
                 self._permission_timer.start()
                 self._body.setText(
                     _STEPS[self._step]["body"]
-                    + "\n\nTurn on the Chatter switch in Accessibility, then return here. The button will update when macOS sees the change."
+                    + "\n\nTurn on Chatter in Accessibility. If it is not listed, click + and choose /Applications/Chatter.app. Then return here; this button will update when macOS sees the change."
                 )
                 self._button.setText("Check Accessibility")
             else:
@@ -241,10 +241,9 @@ class OnboardingWindow(QDialog):
                     return
                 self._body.setText(
                     _STEPS[self._step]["body"]
-                    + "\n\nmacOS has not refreshed this permission in the current process. Click below once to restart Chatter and check the toggle again."
+                    + "\n\nIf Chatter is not listed, click + and choose /Applications/Chatter.app. Make sure its switch is on, then click Check Accessibility again."
                 )
-                self._button.setText("Restart Chatter and check")
-                self._restart_required = True
+                self._button.setText("Check Accessibility again")
         elif self._step == 2:
             if permissions.input_monitoring_available():
                 self._advance()
@@ -257,17 +256,15 @@ class OnboardingWindow(QDialog):
                 self._permission_timer.start()
                 self._body.setText(
                     _STEPS[self._step]["body"]
-                    + "\n\nTurn on Chatter if it appears, then return here. The button will update when macOS sees the change. "
-                    "If it is missing, relaunch Chatter from Applications after finishing Accessibility."
+                    + "\n\nTurn on Chatter if it appears, then return here. If it is missing, click + and choose /Applications/Chatter.app. The button will update when macOS sees the change."
                 )
                 self._button.setText("Check Input Monitoring")
             else:
                 self._body.setText(
                     _STEPS[self._step]["body"]
-                    + "\n\nmacOS has not refreshed this permission in the current process. Click below once to restart Chatter and check the toggle again."
+                    + "\n\nIf Chatter is not listed, click + and choose /Applications/Chatter.app. Make sure its switch is on, then click Check Input Monitoring again."
                 )
-                self._button.setText("Restart Chatter and check")
-                self._restart_required = True
+                self._button.setText("Check Input Monitoring again")
         else:
             self.accept()
 

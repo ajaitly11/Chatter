@@ -164,6 +164,11 @@ class PushToTalkController(QObject):
         self.stop()
         self._live_cleanup.shutdown()
 
+    @property
+    def listener_running(self) -> bool:
+        """Whether the global hotkey listener has been started."""
+        return self._listener is not None and self._listener.running
+
     def _on_press(self):
         if self._recording:
             return

@@ -119,6 +119,10 @@ class RawKeyListener:
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
+    @property
+    def running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
     def stop(self):
         if self._run_loop is not None:
             Quartz.CFRunLoopStop(self._run_loop)
