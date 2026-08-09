@@ -107,6 +107,11 @@ app context, dictionary/cleanup activity, paste success, and finishing time.
 It does not use an account or network analytics; clearing dictation history
 also removes the source used for these summaries.
 
+If push-to-talk is unavailable, the Live Dictation tab shows exactly which
+macOS permission is missing and a **Finish setup** button. Once the final
+toggle is enabled, Chatter starts the listener automatically without a
+relaunch.
+
 Once granted, choose the microphone in Settings, hold Right Shift anywhere,
 speak, and release — a status HUD appears at the MacBook notch and shows live
 partial text while you talk. When you are working on an attached display, the

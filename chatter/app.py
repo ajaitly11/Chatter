@@ -151,6 +151,10 @@ def run():
     permission_poller.setInterval(1500)
 
     def recover_hotkey_when_ready():
+        window._refresh_permission_status()
+        window._refresh_setup_banner()
+        if permissions_ready() and not config.load().get("onboarding_complete", False):
+            config.update(onboarding_complete=True, onboarding_dismissed=False)
         if (
             config.load().get("push_to_talk_enabled", True)
             and permissions_ready()
@@ -267,6 +271,7 @@ def run():
     def refresh_permissions():
         """Refresh TCC state and start the listener when setup is complete."""
         window._refresh_permission_status()
+        window._refresh_setup_banner()
         restart_hotkey_listener()
         refresh_menu_state()
 
@@ -278,6 +283,8 @@ def run():
         elif onboarding.dismissed:
             config.update(onboarding_dismissed=True)
         refresh_permissions()
+
+    window.setup_requested.connect(run_onboarding)
 
     finish_setup_action = QAction("Finish setup…")
     finish_setup_action.triggered.connect(run_onboarding)

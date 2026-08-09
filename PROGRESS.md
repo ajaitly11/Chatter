@@ -265,3 +265,9 @@ being something worth open-sourcing rather than a vibe-coded prototype.
   transcript analytics leave the Mac.
 - Added the Insights destination to the Chatter menu-bar/native application
   menu and unit coverage for the summary calculations.
+- Added a pace gauge, context donut, and pipeline progress bars so Insights
+  communicates patterns visually instead of relying on large number tiles.
+- Added an always-visible Live Dictation setup card whenever Microphone,
+  Input Monitoring, or Accessibility is missing. It resumes the existing
+  one-time permission flow and the background permission watcher starts the
+  hotkey listener as soon as the final toggle is recognized.
