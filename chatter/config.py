@@ -48,6 +48,10 @@ DEFAULTS = {
     # up. Do not trap them in the modal on every launch; the menu bar keeps a
     # visible "Finish setup" entry so setup can be resumed deliberately.
     "onboarding_dismissed": False,
+    # Accessibility changes can be stale in the current process. The setup
+    # flow is allowed one automatic bundle relaunch, then it must offer a
+    # non-blocking exit instead of restarting or prompting forever.
+    "onboarding_permission_restart_attempted": False,
 }
 
 

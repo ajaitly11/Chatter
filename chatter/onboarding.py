@@ -55,7 +55,10 @@ class OnboardingWindow(QDialog):
         if self._step == 0:
             self._mic_ready = False
         self._settings_opened = False
-        self._restart_required = False
+        self._restart_attempted = bool(
+            config.load().get("onboarding_permission_restart_attempted", False)
+        )
+        self._terminal_permission_state = False
         self._dismissed = False
         self._permission_timer = QTimer(self)
         self._permission_timer.setInterval(600)
@@ -138,12 +141,19 @@ class OnboardingWindow(QDialog):
         if not bundle:
             self._body.setText(
                 _STEPS[self._step]["body"]
-                + "\n\nPlease quit and reopen Chatter from Applications after enabling this permission."
+                + "\n\nPlease quit and reopen Chatter from Applications after enabling this permission. You can continue to the app now and finish setup later from the menu bar."
             )
-            self._button.setText("Check again")
-            self._restart_required = False
+            self._terminal_permission_state = True
+            self._button.setText("Continue to Chatter")
             return
 
+        self._restart_attempted = True
+        config.update(
+            onboarding_permission_restart_attempted=True,
+            # The relaunched bundle must show the setup window again even if
+            # the user originally opened it from the deferred setup banner.
+            onboarding_dismissed=False,
+        )
         self._button.setEnabled(False)
         self._body.setText(
             _STEPS[self._step]["body"]
@@ -174,6 +184,10 @@ class OnboardingWindow(QDialog):
         self._button.setText(step["button"])
 
     def _on_button(self):
+        if self._terminal_permission_state:
+            self._continue_without_setup()
+            return
+
         if self._step == 0:
             # Opening (and immediately closing) a mic input stream is what
             # actually triggers macOS's mic-permission prompt — doing it
@@ -218,8 +232,6 @@ class OnboardingWindow(QDialog):
         elif self._step == 1:
             if permissions.is_trusted():
                 self._advance()
-            elif self._restart_required:
-                self._restart_and_recheck()
             elif not self._settings_opened:
                 permissions.request_trust()
                 permissions.open_accessibility_settings()
@@ -239,16 +251,15 @@ class OnboardingWindow(QDialog):
                     self._settings_opened = False
                     self._advance()
                     return
-                self._body.setText(
-                    _STEPS[self._step]["body"]
-                    + "\n\nIf Chatter is not listed, click + and choose /Applications/Chatter.app. Make sure its switch is on, then click Check Accessibility again."
-                )
-                self._button.setText("Check Accessibility again")
+                if not self._restart_attempted:
+                    self._restart_and_recheck()
+                else:
+                    self._show_terminal_permission_state(
+                        "macOS is still not reporting Accessibility for this exact Chatter app. In System Settings → Privacy & Security → Accessibility, remove any old Chatter entry, click +, choose /Applications/Chatter.app, and turn it on. Chatter will not keep restarting or looping."
+                    )
         elif self._step == 2:
             if permissions.input_monitoring_available():
                 self._advance()
-            elif self._restart_required:
-                self._restart_and_recheck()
             elif not self._settings_opened:
                 permissions.request_input_monitoring()
                 permissions.open_input_monitoring_settings()
@@ -260,18 +271,22 @@ class OnboardingWindow(QDialog):
                 )
                 self._button.setText("Check Input Monitoring")
             else:
-                self._body.setText(
-                    _STEPS[self._step]["body"]
-                    + "\n\nIf Chatter is not listed, click + and choose /Applications/Chatter.app. Make sure its switch is on, then click Check Input Monitoring again."
-                )
-                self._button.setText("Check Input Monitoring again")
+                if not self._restart_attempted:
+                    self._restart_and_recheck()
+                else:
+                    self._show_terminal_permission_state(
+                        "macOS is still not reporting Input Monitoring for this exact Chatter app. In System Settings → Privacy & Security → Input Monitoring, remove any old Chatter entry, click +, choose /Applications/Chatter.app, and turn it on. Chatter will not keep restarting or looping."
+                    )
         else:
             self.accept()
 
     def _continue_without_setup(self):
         """Leave setup without making permissions a launch-blocking trap."""
         self._dismissed = True
-        config.update(onboarding_dismissed=True)
+        config.update(
+            onboarding_dismissed=True,
+            onboarding_permission_restart_attempted=False,
+        )
         self.accept()
 
     def reject(self):
@@ -279,8 +294,18 @@ class OnboardingWindow(QDialog):
         # A first-run dialog should never force a user to rediscover a stale
         # permission state before they can reach the main app.
         self._dismissed = True
-        config.update(onboarding_dismissed=True)
+        config.update(
+            onboarding_dismissed=True,
+            onboarding_permission_restart_attempted=False,
+        )
         super().reject()
+
+    def _show_terminal_permission_state(self, message: str):
+        """Stop the retry loop and leave the app usable while setup is fixed."""
+        self._permission_timer.stop()
+        self._terminal_permission_state = True
+        self._body.setText(_STEPS[self._step]["body"] + "\n\n" + message)
+        self._button.setText("Continue to Chatter")
 
     def _refresh_permission_step(self):
         """Poll while System Settings is open so the user gets confirmation
@@ -293,6 +318,7 @@ class OnboardingWindow(QDialog):
         elif self._step == 1 and permissions.is_trusted():
             self._permission_timer.stop()
             self._settings_opened = False
+            self._terminal_permission_state = False
             self._body.setText(_STEPS[self._step]["body"] + "\n\nAccessibility is ready.")
             self._button.setText("Continue")
         elif self._step == 2 and permissions.input_monitoring_available():
@@ -317,6 +343,6 @@ class OnboardingWindow(QDialog):
     def _advance(self):
         self._permission_timer.stop()
         self._settings_opened = False
-        self._restart_required = False
+        self._terminal_permission_state = False
         self._step = min(self._step + 1, len(_STEPS) - 1)
         self._render_step()

@@ -276,12 +276,27 @@ def run():
         refresh_menu_state()
 
     def run_onboarding():
+        # A deliberate setup session gets one bounded TCC recovery attempt.
+        # If macOS still reports a stale state after that relaunch, the
+        # dialog offers a non-blocking exit instead of sending the user back
+        # through the same button forever.
+        config.update(
+            onboarding_dismissed=False,
+            onboarding_permission_restart_attempted=False,
+        )
         onboarding = OnboardingWindow(window)
         onboarding.exec()
         if onboarding.permissions_ready:
-            config.update(onboarding_complete=True, onboarding_dismissed=False)
+            config.update(
+                onboarding_complete=True,
+                onboarding_dismissed=False,
+                onboarding_permission_restart_attempted=False,
+            )
         elif onboarding.dismissed:
-            config.update(onboarding_dismissed=True)
+            config.update(
+                onboarding_dismissed=True,
+                onboarding_permission_restart_attempted=False,
+            )
         refresh_permissions()
 
     window.setup_requested.connect(run_onboarding)
@@ -484,9 +499,16 @@ def run():
         onboarding = OnboardingWindow(window)
         onboarding.exec()
         if onboarding.permissions_ready:
-            config.update(onboarding_complete=True, onboarding_dismissed=False)
+            config.update(
+                onboarding_complete=True,
+                onboarding_dismissed=False,
+                onboarding_permission_restart_attempted=False,
+            )
         elif onboarding.dismissed:
-            config.update(onboarding_dismissed=True)
+            config.update(
+                onboarding_dismissed=True,
+                onboarding_permission_restart_attempted=False,
+            )
         window._refresh_permission_status()
         cfg = config.load()
 
