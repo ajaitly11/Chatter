@@ -220,6 +220,7 @@ def run():
         flash_hud("done", phrase="Done!")
         window.set_live_state("done", label="Done!")
         window._reload_dictation_history()
+        window._reload_insights()
         if pasted:
             correction_watcher.watch_after_paste()
 
@@ -227,6 +228,7 @@ def run():
 
     def on_correction_learned(wrong: str, right: str):
         window._reload_dictionary_table()
+        window._reload_insights()
 
     correction_watcher.correction_learned.connect(on_correction_learned)
     hotkey.error.connect(lambda msg: flash_hud("error", _truncate(msg, 60), delay_ms=3200))
@@ -245,12 +247,22 @@ def run():
 
     def open_settings():
         window.show()
-        window.tabs.setCurrentIndex(5)
+        window.tabs.setCurrentWidget(window.settings_tab)
         window.raise_()
         window.activateWindow()
 
     settings_action.triggered.connect(open_settings)
     menu.addAction(settings_action)
+
+    def open_insights():
+        window.show()
+        window.tabs.setCurrentWidget(window.insights_tab)
+        window.raise_()
+        window.activateWindow()
+
+    insights_action = QAction("Open Insights")
+    insights_action.triggered.connect(open_insights)
+    menu.addAction(insights_action)
 
     def refresh_permissions():
         """Refresh TCC state and start the listener when setup is complete."""
@@ -423,6 +435,7 @@ def run():
     native_menu.setNativeMenuBar(True)
     chatter_menu = native_menu.addMenu("Chatter")
     chatter_menu.addAction(open_action)
+    chatter_menu.addAction(insights_action)
     chatter_menu.addAction(settings_action)
     chatter_menu.addAction(finish_setup_action)
     chatter_menu.addSeparator()

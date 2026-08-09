@@ -15,6 +15,7 @@ from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from . import config
 from . import dictionary
 from . import history
+from . import insights
 from . import paste_action
 from . import sound
 from .audio_capture import SAMPLE_RATE, StreamingMicRecorder
@@ -326,6 +327,7 @@ class PushToTalkController(QObject):
         threading.Thread(target=self._finish, daemon=True).start()
 
     def _finish(self):
+        processing_started_at = time.perf_counter()
         try:
             if self._collector_thread is not None:
                 # No timeout: a truncated wait here means silently dropped
@@ -384,7 +386,18 @@ class PushToTalkController(QObject):
             # Logged regardless of paste success — "even if it doesn't get
             # pasted" was the explicit ask, so a clipboard-only fallback
             # still needs to show up in the Live Dictation history.
-            history.append("dictation", text, pasted=pasted)
+            context_for_history = context or CaptureContext()
+            history.append(
+                "dictation",
+                text,
+                pasted=pasted,
+                word_count=insights.count_words(text),
+                audio_seconds=round(len(trimmed) / SAMPLE_RATE, 3),
+                context_app=context_for_history.app_name,
+                context_mode=context_for_history.mode,
+                cleanup_applied=bool(cfg["formatting_enabled"]),
+                processing_ms=round((time.perf_counter() - processing_started_at) * 1000),
+            )
             self.result_ready.emit(text, pasted)
         except Exception:
             logger.exception("push-to-talk pipeline failed")

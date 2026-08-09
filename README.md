@@ -101,6 +101,12 @@ cleanup, and choose an automatic writing context. Automatic context uses only
 the foreground app and window title to distinguish email, notes, coding/AI,
 and social writing; it never reads the page or document.
 
+The **Insights** tab is a local activity view over Chatter's saved dictation
+history. It shows word volume, speaking pace, active-day streaks, foreground
+app context, dictionary/cleanup activity, paste success, and finishing time.
+It does not use an account or network analytics; clearing dictation history
+also removes the source used for these summaries.
+
 Once granted, choose the microphone in Settings, hold Right Shift anywhere,
 speak, and release — a status HUD appears at the MacBook notch and shows live
 partial text while you talk. When you are working on an attached display, the

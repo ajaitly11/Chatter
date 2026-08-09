@@ -12,6 +12,10 @@ QMainWindow {
     background-color: #2a1b16;
 }
 
+QLabel {
+    background-color: transparent;
+}
+
 QLabel#sectionTitle {
     color: #b9aaa3;
     font-size: 11px;
