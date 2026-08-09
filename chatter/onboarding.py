@@ -56,6 +56,7 @@ class OnboardingWindow(QDialog):
             self._mic_ready = False
         self._settings_opened = False
         self._restart_required = False
+        self._dismissed = False
         self._permission_timer = QTimer(self)
         self._permission_timer.setInterval(600)
         self._permission_timer.timeout.connect(self._refresh_permission_step)
@@ -103,9 +104,10 @@ class OnboardingWindow(QDialog):
         self._button.clicked.connect(self._on_button)
         v.addWidget(self._button)
 
-        later_button = QPushButton("Set up later")
+        later_button = QPushButton("Continue to Chatter")
         later_button.setObjectName("secondary")
-        later_button.clicked.connect(self.reject)
+        later_button.setToolTip("You can finish permissions later from the Chatter menu bar icon.")
+        later_button.clicked.connect(self._continue_without_setup)
         v.addWidget(later_button)
 
         self._render_step()
@@ -269,6 +271,20 @@ class OnboardingWindow(QDialog):
         else:
             self.accept()
 
+    def _continue_without_setup(self):
+        """Leave setup without making permissions a launch-blocking trap."""
+        self._dismissed = True
+        config.update(onboarding_dismissed=True)
+        self.accept()
+
+    def reject(self):
+        # Treat the window close button like the explicit secondary action.
+        # A first-run dialog should never force a user to rediscover a stale
+        # permission state before they can reach the main app.
+        self._dismissed = True
+        config.update(onboarding_dismissed=True)
+        super().reject()
+
     def _refresh_permission_step(self):
         """Poll while System Settings is open so the user gets confirmation
         without repeatedly reopening the same pane."""
@@ -296,6 +312,10 @@ class OnboardingWindow(QDialog):
             and permissions.input_monitoring_available()
             and permissions.is_trusted()
         )
+
+    @property
+    def dismissed(self) -> bool:
+        return self._dismissed
 
     def _advance(self):
         self._permission_timer.stop()

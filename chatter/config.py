@@ -44,6 +44,10 @@ DEFAULTS = {
     # Whether the first-run permission flow (chatter/onboarding.py) has
     # already been shown.
     "onboarding_complete": False,
+    # A user may dismiss setup while a macOS privacy pane is still catching
+    # up. Do not trap them in the modal on every launch; the menu bar keeps a
+    # visible "Finish setup" entry so setup can be resumed deliberately.
+    "onboarding_dismissed": False,
 }
 
 

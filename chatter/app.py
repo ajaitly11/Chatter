@@ -4,8 +4,9 @@ import threading
 from pathlib import Path
 
 from PyQt6.QtCore import QLockFile, QRectF, Qt
-from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PyQt6.QtGui import QAction, QActionGroup, QColor, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
+import sounddevice as sd
 
 from . import config
 from . import permissions
@@ -221,6 +222,46 @@ def run():
     open_action.triggered.connect(lambda: (window.show(), window.raise_(), window.activateWindow()))
     menu.addAction(open_action)
 
+    settings_action = QAction("Open Settings")
+
+    def open_settings():
+        window.show()
+        window.tabs.setCurrentIndex(5)
+        window.raise_()
+        window.activateWindow()
+
+    settings_action.triggered.connect(open_settings)
+    menu.addAction(settings_action)
+
+    def refresh_permissions():
+        """Refresh TCC state and start the listener when setup is complete."""
+        window._refresh_permission_status()
+        restart_hotkey_listener()
+        refresh_menu_state()
+
+    def run_onboarding():
+        onboarding = OnboardingWindow(window)
+        onboarding.exec()
+        if onboarding.permissions_ready:
+            config.update(onboarding_complete=True, onboarding_dismissed=False)
+        elif onboarding.dismissed:
+            config.update(onboarding_dismissed=True)
+        refresh_permissions()
+
+    finish_setup_action = QAction("Finish setup…")
+    finish_setup_action.triggered.connect(run_onboarding)
+    menu.addAction(finish_setup_action)
+
+    menu.addSeparator()
+
+    permission_status_action = QAction()
+    permission_status_action.setEnabled(False)
+    menu.addAction(permission_status_action)
+
+    check_permissions_action = QAction("Refresh permissions")
+    check_permissions_action.triggered.connect(refresh_permissions)
+    menu.addAction(check_permissions_action)
+
     ptt_action = QAction("Push-to-talk enabled")
     ptt_action.setCheckable(True)
     cfg = config.load()
@@ -235,6 +276,112 @@ def run():
 
     ptt_action.toggled.connect(toggle_ptt)
     menu.addAction(ptt_action)
+
+    cleanup_action = QAction("Clean up with local AI")
+    cleanup_action.setCheckable(True)
+    cleanup_action.setChecked(cfg.get("formatting_enabled", True))
+
+    def toggle_cleanup(checked):
+        window.format_checkbox.blockSignals(True)
+        window.format_checkbox.setChecked(checked)
+        window.format_checkbox.blockSignals(False)
+        window._on_formatting_toggled(checked)
+
+    cleanup_action.toggled.connect(toggle_cleanup)
+    menu.addAction(cleanup_action)
+
+    context_menu = QMenu("Writing context", menu)
+    context_group = QActionGroup(context_menu)
+    context_group.setExclusive(True)
+    context_options = [
+        ("Automatic (foreground app)", "auto"),
+        ("Neutral dictation", "general"),
+        ("Professional email", "email"),
+        ("Notes / journal", "notes"),
+        ("Coding / AI prompt", "coding"),
+        ("Social / chat", "social"),
+    ]
+    context_actions = []
+    for label, value in context_options:
+        action = QAction(label, context_menu)
+        action.setCheckable(True)
+        action.setData(value)
+
+        def select_context(_checked, mode=value):
+            config.update(cleanup_context_mode=mode)
+            index = window.context_combo.findData(mode)
+            if index >= 0:
+                window.context_combo.blockSignals(True)
+                window.context_combo.setCurrentIndex(index)
+                window.context_combo.blockSignals(False)
+
+        action.triggered.connect(select_context)
+        context_group.addAction(action)
+        context_menu.addAction(action)
+        context_actions.append(action)
+    menu.addMenu(context_menu)
+
+    microphone_menu = QMenu("Microphone", menu)
+    microphone_group = QActionGroup(microphone_menu)
+    microphone_group.setExclusive(True)
+    microphone_actions = []
+    try:
+        input_devices = [
+            str(info.get("name", "")).strip()
+            for info in sd.query_devices()
+            if info.get("max_input_channels", 0) > 0 and str(info.get("name", "")).strip()
+        ]
+    except Exception:
+        logger.exception("couldn't enumerate menu-bar microphone devices")
+        input_devices = []
+    # Preserve order while avoiding duplicate CoreAudio aliases.
+    input_devices = list(dict.fromkeys(input_devices))
+    for label, value in [("System default", "")] + [(name, name) for name in input_devices]:
+        action = QAction(label, microphone_menu)
+        action.setCheckable(True)
+        action.setData(value)
+
+        def select_microphone(_checked, device=value):
+            config.update(input_device=device)
+            index = window.input_device_combo.findData(device)
+            if index >= 0:
+                window.input_device_combo.blockSignals(True)
+                window.input_device_combo.setCurrentIndex(index)
+                window.input_device_combo.blockSignals(False)
+
+        action.triggered.connect(select_microphone)
+        microphone_group.addAction(action)
+        microphone_menu.addAction(action)
+        microphone_actions.append(action)
+    menu.addMenu(microphone_menu)
+
+    def refresh_menu_state():
+        cfg_now = config.load()
+        mic = "ready" if permissions.is_microphone_authorized() else "needs permission"
+        input_state = "ready" if permissions.input_monitoring_available() else "needs permission"
+        access = "ready" if permissions.is_trusted() else "needs permission"
+        permission_status_action.setText(
+            f"Permissions: mic {mic} · hotkey {input_state} · paste {access}"
+        )
+        ptt_action.blockSignals(True)
+        ptt_action.setChecked(cfg_now.get("push_to_talk_enabled", True))
+        ptt_action.blockSignals(False)
+        cleanup_action.blockSignals(True)
+        cleanup_action.setChecked(cfg_now.get("formatting_enabled", True))
+        cleanup_action.blockSignals(False)
+        current_context = cfg_now.get("cleanup_context_mode", "auto")
+        for action in context_actions:
+            action.blockSignals(True)
+            action.setChecked(action.data() == current_context)
+            action.blockSignals(False)
+        current_device = cfg_now.get("input_device", "")
+        for action in microphone_actions:
+            action.blockSignals(True)
+            action.setChecked(action.data() == current_device)
+            action.blockSignals(False)
+
+    menu.aboutToShow.connect(refresh_menu_state)
+    refresh_menu_state()
 
     menu.addSeparator()
     quit_action = QAction("Quit Chatter")
@@ -257,11 +404,12 @@ def run():
     # their own entry) — the onboarding flow's second step actively
     # requests it so macOS shows the real permission prompt and lists this
     # app in System Settings, instead of auto-paste silently doing nothing.
+    # Privacy settings can be revoked or can take a restart to refresh. That
+    # must disable only the affected feature, not lock the user out of the
+    # app. Setup is shown automatically once, then resumed from the menu bar.
     needs_onboarding = (
         not cfg.get("onboarding_complete", False)
-        or not permissions.is_microphone_authorized()
-        or not permissions.is_trusted()
-        or not permissions.is_input_monitoring_trusted()
+        and not cfg.get("onboarding_dismissed", False)
     )
     if needs_onboarding:
         # Register this frozen bundle with macOS before the onboarding dialog
@@ -273,8 +421,14 @@ def run():
         onboarding = OnboardingWindow(window)
         onboarding.exec()
         if onboarding.permissions_ready:
-            config.update(onboarding_complete=True)
+            config.update(onboarding_complete=True, onboarding_dismissed=False)
+        elif onboarding.dismissed:
+            config.update(onboarding_dismissed=True)
         window._refresh_permission_status()
+        cfg = config.load()
+
+    if permissions_ready() and not cfg.get("onboarding_complete", False):
+        config.update(onboarding_complete=True, onboarding_dismissed=False)
         cfg = config.load()
 
     if cfg.get("push_to_talk_enabled", True) and permissions_ready():
