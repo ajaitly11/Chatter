@@ -1,0 +1,29 @@
+name: Package Chatter
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  macos-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Build the app
+        run: |
+          python -m venv venv
+          venv/bin/python -m pip install --upgrade pip
+          venv/bin/python -m pip install -r requirements.txt
+          ./packaging/build_app.sh
+      - name: Archive the app
+        run: ditto -c -k --sequesterRsrc --keepParent Chatter.app Chatter-macOS-arm64.zip
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" Chatter-macOS-arm64.zip --title "Chatter $GITHUB_REF_NAME" --generate-notes

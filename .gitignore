@@ -7,6 +7,9 @@ models/*.gguf
 !models/.gitkeep
 
 Chatter.app/
+build/
+dist/
+*.spec
 packaging/icon.icns
 packaging/icon.iconset/
 

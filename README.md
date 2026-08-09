@@ -10,20 +10,19 @@ of whisper.cpp directly. Two ways to use it:
 - **Push-to-talk** — hold your chosen key (default **Right Shift**, pick from
   the "Push-to-talk key" dropdown in the main window — Right/Left Shift,
   Option, Control, Command, or Caps Lock) anywhere on your Mac and speak.
-  Audio is fed to a streaming-capable model *live*, as you talk — not batched
-  up and processed after you let go — so release just finalizes the last
-  fraction of a second and pastes at your cursor. Wispr-Flow-style, live
-  partial captions included.
+  One streaming-capable local ASR model transcribes the audio while you speak,
+  finalizes its own transcript on release, and inserts that result. There is
+  no second ASR pass in the push-to-talk path. The optional local cleanup model
+  is the only additional model used there.
 
-File transcription and push-to-talk each keep their own persistent,
-Metal-accelerated `transcribe.cpp` session (loaded once, reused on every call/
-hotkey press) — they use different models, since push-to-talk needs a model
-whose capabilities report `supports_streaming=True` (most architectures,
-including Whisper and the default Parakeet-TDT release, don't support this
-in transcribe.cpp — see "Push-to-talk setup" below).
+The current push-to-talk model is
+`nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf`. The older Nemotron and Moonshine
+files remain available as fallbacks. File transcription still has a separate
+batch-model slot because it is a different workflow.
 
 An optional local-LLM pass (any Gemma/Llama-family GGUF model served by
-`llama-server`) cleans up filler words and punctuation before pasting.
+`llama-server`) cleans up filler words, punctuation, grammar, repeated words,
+and verbal self-corrections before pasting. It runs entirely on the Mac.
 
 ## 1. Install ffmpeg
 
@@ -49,30 +48,16 @@ see "Building from source" below.
 
 ## 3. Download models
 
-Models are GGUF files hosted under the `handy-computer` org on Hugging Face
-(`https://huggingface.co/handy-computer`, `<model>-gguf` repos — Q8_0 is a
-good default quant). Drop them into `models/`.
+Use the short [model guide](docs/model-guide.md), or open **Models → How to
+choose** inside Chatter. Start with one live model:
 
-For **file transcription**, any batch model works, e.g.:
+- **Live dictation:** Nemotron 3.5 streaming Q8_0.
+- **Optional cleanup:** a small 2B–4B instruct GGUF.
+- **File transcription:** Whisper large-v3 Turbo or Parakeet TDT.
 
-- `whisper-large-v3-turbo-Q8_0.gguf` — great general-purpose accuracy, 100+ languages
-- `parakeet-tdt-0.6b-v2-Q8_0.gguf` — fast, English-only, no length cap per call
-
-For **push-to-talk**, you need a model that actually supports incremental
-streaming — check with `model.capabilities.supports_streaming` in a Python
-shell before relying on one. Chatter auto-detects, in order of preference:
-
-- `nemotron-speech-streaming-en-0.6b-Q8_0.gguf` (from the
-  `nemotron-speech-streaming-en-0.6b-gguf` repo, ~700MB) — the default.
-  Measured both faster *and* substantially more accurate than
-  moonshine-streaming-tiny on a 63s test clip (real-time-factor ~0.07 vs
-  ~0.15–0.28), despite the larger file.
-- `moonshine-streaming-tiny-Q8_0.gguf` (~48MB) — smaller/lighter fallback if
-  you'd rather not download the bigger model.
-
-Point `streaming_model_path` in
-`~/Library/Application Support/Chatter/config.json` at a different streaming
-model if you want to use something else.
+The guide recommends a setup by unified memory, explains what each model does,
+and links directly to download searches. Chatter rejects a live model that
+does not support streaming.
 
 ## 4. Run it
 
@@ -87,28 +72,43 @@ Or build a double-clickable app once your venv/models are set up:
 open Chatter.app
 ```
 
-`Chatter.app` is a thin wrapper around this checkout's venv — it isn't a
-portable/frozen bundle, so it only runs from this machine/folder. Rebuild it
+`Chatter.app` is a frozen arm64 bundle with a real `Chatter` executable. The
+large GGUF model directory stays outside the bundle and is linked into the
+app at build time, so rebuilding does not duplicate the models. Rebuild it
 any time with `./packaging/build_app.sh`.
+
+To make it appear in Launchpad and the Applications folder, copy the generated
+app once:
+
+```bash
+ditto Chatter.app /Applications/Chatter.app
+open -a /Applications/Chatter.app
+```
 
 ## Push-to-talk setup
 
-Push-to-talk needs two macOS permissions, both granted to the running Python
-process (macOS shows it as **"Python"** in the permission list, since this
-isn't a signed/frozen app — see "Known limitations" below):
+Push-to-talk needs three macOS permissions, granted to Chatter:
 
-1. **System Settings → Privacy & Security → Accessibility** — add Python
-   (or Terminal, if you're running via `python main.py`), needed to simulate
-   the Cmd+V paste.
-2. **System Settings → Privacy & Security → Input Monitoring** — add the same,
+1. **System Settings → Privacy & Security → Accessibility** — add Chatter,
+   needed to simulate the Cmd+V paste.
+2. **System Settings → Privacy & Security → Input Monitoring** — add Chatter,
    needed to detect the global Right Shift hold.
 3. **System Settings → Privacy & Security → Microphone** — grant when
    prompted, needed to record your voice.
 
-Once granted, hold Right Shift anywhere, speak, and release — a status HUD
-slides up from the bottom-right of your screen showing a live partial
-transcript (last few words) while you talk, and the final (optionally
-cleaned-up) text pastes wherever your cursor is focused. Even without
+The Settings tab lets you choose and test the input device, toggle local AI
+cleanup, and choose an automatic writing context. Automatic context uses only
+the foreground app and window title to distinguish email, notes, coding/AI,
+and social writing; it never reads the page or document.
+
+Once granted, choose the microphone in Settings, hold Right Shift anywhere,
+speak, and release — a status HUD appears at the MacBook notch and shows live
+partial text while you talk. When you are working on an attached display, the
+same HUD is mirrored there so it remains in your field of view. The final
+(optionally cleaned-up) text pastes
+wherever your cursor is focused. The compact HUD follows the newest words
+of a long live transcript; the full draft remains visible in the Live
+Dictation tab. Even without
 Accessibility granted, the result is always copied to the clipboard, so
 manual Cmd+V works as a fallback. Toggle push-to-talk on/off from the
 menu-bar (tray) icon; closing the main window does not quit the app, only
@@ -121,18 +121,27 @@ Chatter keeps a personal dictionary of words the ASR consistently mishears
 the main window, or let Chatter learn automatically: after a push-to-talk
 paste, it watches the field you pasted into (via the same Accessibility
 trust used for paste simulation — nothing else is monitored) for about a
-minute. If you correct exactly one word, it's saved to the dictionary and
-applied to every transcript from then on — both as a direct substitution and
-as a hint to the AI cleanup pass. This is word-level personalization, not
+minute. If you correct exactly one word — or insert a missing space in a
+fused word — it's saved to the dictionary and applied to every transcript
+from then on, both as a direct substitution and as a hint to the AI cleanup
+pass. This is word-level personalization, not
 model retraining: `transcribe.cpp` is inference-only, so the ASR's actual
 recognition of your voice/accent doesn't change, but confirmed corrections
 do get remembered and reapplied.
 
 ## AI cleanup (optional)
 
-Chatter can run raw transcripts through a small local LLM to fix punctuation
-and strip filler words. It's on by default (toggle with the "Clean up with
-AI ✨" checkbox) but does nothing until configured:
+Chatter can run raw transcripts through a small local LLM to fix punctuation,
+strip filler words, recognize explicit self-corrections, and clean the latest
+live preview. Clear spoken shopping/list requests are rendered with stable
+item boundaries. Long transcripts get a dynamic output budget instead of an
+arbitrary 512-token ceiling. Toggle it with the
+"Clean up with local AI (parallel) ✨" checkbox. It runs on a background
+thread while Nemotron continues transcribing, so the streaming path and HUD
+do not wait for cleanup; the final paste uses a ready cleanup result when one
+is available. The final transcript is pasted as one operation rather than
+typed character by character, while Chatter restores the clipboard it
+temporarily uses for that paste:
 
 1. Have a `llama-server` binary (from
    [llama.cpp](https://github.com/ggml-org/llama.cpp)) and a chat-capable
@@ -143,6 +152,12 @@ AI ✨" checkbox) but does nothing until configured:
 
 If unconfigured or the server fails to start, Chatter silently falls back to
 the raw transcript — cleanup is never required for either flow to work.
+
+The Settings tab also exposes an experimental Gemma multi-token prediction
+toggle. It auto-detects a matching `MTP/` head beside the configured GGUF,
+but is off by default because short cleanup requests can be slower on some
+Apple Silicon/llama.cpp combinations. It never changes the one-model
+Nemotron ASR path.
 
 ## Notes
 
@@ -163,10 +178,10 @@ the raw transcript — cleanup is never required for either flow to work.
 
 ## Known limitations
 
-- **Permission churn**: because `Chatter.app` just execs the venv's Python
-  rather than being a signed, frozen bundle, macOS ties Accessibility/Input
-  Monitoring grants to the Python interpreter binary itself, not to
-  "Chatter". Switching Python versions may mean re-granting permissions.
+- **Permission reset after repackaging**: macOS privacy grants are tied to the
+  executable identity. Rebuilding or moving the frozen app can require
+  granting Chatter access again; this is expected and does not affect the
+  model or configuration files.
 - **Not portable**: `Chatter.app` hardcodes this checkout's absolute paths at
   build time. Cloning the repo elsewhere requires rebuilding it there with
   `./packaging/build_app.sh`.

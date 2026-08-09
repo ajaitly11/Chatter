@@ -57,16 +57,26 @@ _FLAG_MASK_BY_KEYCODE = {
 
 
 class RawKeyListener:
-    def __init__(self, keycode: int, on_down, on_up):
+    def __init__(self, keycode: int, on_down, on_up, on_error=None):
         self._keycode = keycode
         self._flag_mask = _FLAG_MASK_BY_KEYCODE[keycode]
         self._on_down = on_down
         self._on_up = on_up
+        self._on_error = on_error
         self._thread = None
         self._run_loop = None
+        self._tap = None
 
     def _callback(self, proxy, event_type, event, refcon):
         try:
+            disabled_events = {
+                getattr(Quartz, "kCGEventTapDisabledByTimeout", -1),
+                getattr(Quartz, "kCGEventTapDisabledByUserInput", -2),
+            }
+            if event_type in disabled_events and self._tap is not None:
+                logger.warning("hotkey event tap was disabled; re-enabling it")
+                Quartz.CGEventTapEnable(self._tap, True)
+                return event
             if event_type == Quartz.kCGEventFlagsChanged:
                 code = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
                 if code == self._keycode:
@@ -91,8 +101,11 @@ class RawKeyListener:
                 "couldn't create event tap — grant Input Monitoring permission "
                 "in System Settings > Privacy & Security"
             )
+            if self._on_error is not None:
+                self._on_error("Hotkey listener unavailable — grant Input Monitoring permission.")
             return
 
+        self._tap = tap
         source = Quartz.CFMachPortCreateRunLoopSource(None, tap, 0)
         self._run_loop = Quartz.CFRunLoopGetCurrent()
         Quartz.CFRunLoopAddSource(self._run_loop, source, Quartz.kCFRunLoopCommonModes)
@@ -101,6 +114,8 @@ class RawKeyListener:
         Quartz.CFRunLoopRun()
 
     def start(self):
+        if self._thread is not None and self._thread.is_alive():
+            return
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -108,3 +123,7 @@ class RawKeyListener:
         if self._run_loop is not None:
             Quartz.CFRunLoopStop(self._run_loop)
             self._run_loop = None
+        if self._thread is not None and self._thread is not threading.current_thread():
+            self._thread.join(timeout=0.5)
+        self._thread = None
+        self._tap = None

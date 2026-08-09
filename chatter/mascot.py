@@ -59,13 +59,15 @@ _EAR_RADII = (0.5, 0.5, 0.5, 0.5, 0.6, 0.6, 0.4, 0.4)
 _STATES = {
     "listening": dict(
         body_rect=(18, 46, 64, 64), body_radii=_BODY_RADII,
-        ear_rect=(14, 22), ear_top=6, ear_inset=22, ear_rot=16,
+        # Keep the ears visibly separate and angled away from the body. The
+        # same geometry is reused by the static app/bundle icon.
+        ear_rect=(14, 22), ear_top=10, ear_inset=2, ear_rot=16,
         eye_style="circle", eye_r=3.2, eyes=((22, 28), (42, 28)),
         mouth=((24, 40), (32, 46), (40, 40)), mouth_w=2.4,
     ),
     "processing": dict(
         body_rect=(18, 46, 64, 64), body_radii=_BODY_RADII,
-        ear_rect=(14, 22), ear_top=6, ear_inset=22, ear_rot=10,
+        ear_rect=(14, 22), ear_top=10, ear_inset=2, ear_rot=10,
         eye_style="circle", eye_r=3.2, eyes=((22, 28), (42, 28)),
         mouth=((26, 41), (32, 43.5), (38, 41)), mouth_w=2.4,
     ),
@@ -78,13 +80,13 @@ _STATES = {
         # gives it a distinct, slightly squashed *feel* without changing the
         # footprint everything else shares.
         body_rect=(18, 46, 64, 64), body_radii=_DONE_BODY_RADII,
-        ear_rect=(14, 22), ear_top=6, ear_inset=22, ear_rot=6,
+        ear_rect=(14, 22), ear_top=10, ear_inset=2, ear_rot=6,
         eye_style="arc", eyes=((18, 27, 22, 24, 26, 27), (38, 27, 42, 24, 46, 27)),
         mouth=((22, 37), (32, 46), (42, 37)), mouth_w=2.6,
     ),
     "error": dict(
         body_rect=(18, 46, 64, 64), body_radii=_BODY_RADII,
-        ear_rect=(14, 22), ear_top=6, ear_inset=22, ear_rot=6,
+        ear_rect=(14, 22), ear_top=10, ear_inset=2, ear_rot=6,
         eye_style="circle", eye_r=3.2, eyes=((22, 28), (42, 28)),
         mouth=((26, 42), (32, 40), (38, 42)), mouth_w=2.4,
     ),
@@ -97,7 +99,10 @@ class Mascot(QWidget):
     def __init__(self, size: int = 100, parent=None):
         super().__init__(parent)
         self._design_scale = size / DESIGN_W
-        self.setFixedSize(round(size), round(size * DESIGN_H / DESIGN_W))
+        # The body reaches the bottom of the design canvas. Round up the
+        # height so the final anti-aliased row is not clipped in the Live tab
+        # or at larger icon sizes.
+        self.setFixedSize(round(size), math.ceil(size * DESIGN_H / DESIGN_W))
         self._state = "listening"
         self._phase = 0.0
         self._settle = 1.0  # done-state squash progress, animated
@@ -135,7 +140,10 @@ class Mascot(QWidget):
 
     def _tick(self):
         self._phase += 0.045
-        if self._state in ("listening", "processing"):
+        # Keep the character alive after the work finishes too. The motion is
+        # intentionally restrained in done/error, so the HUD feels friendly
+        # without competing with the status text.
+        if self._state in ("listening", "processing", "done", "error"):
             self.update()
 
     # painting -----------------------------------------------------------
@@ -175,6 +183,13 @@ class Mascot(QWidget):
             sy = 1.0 - 0.16 * (1.0 - (1.0 - t) ** 2)
             painter.translate(cx, cy)
             painter.scale(sx, sy)
+            painter.rotate(math.sin(self._phase * 0.8) * 1.2)
+            painter.translate(-cx, -cy)
+        elif self._state == "error":
+            # A tiny sympathetic wobble makes the error state feel like the
+            # same character reacting, rather than a disconnected red icon.
+            painter.translate(cx, cy)
+            painter.rotate(math.sin(self._phase * 1.15) * 1.4)
             painter.translate(-cx, -cy)
 
         painter.setPen(Qt.PenStyle.NoPen)
