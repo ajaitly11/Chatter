@@ -13,7 +13,7 @@ jobs:
     # A signing step hanging on an unanswerable GUI prompt once burned 6
     # hours of runner time before GitHub's own default limit stepped in.
     # This build normally finishes in a few minutes — fail fast instead.
-    timeout-minutes: 20
+    timeout-minutes: 5
     env:
       KEYCHAIN_PATH: ${{ github.workspace }}/chatter-release.keychain-db
     steps:
@@ -37,7 +37,7 @@ jobs:
           CERT_P12_B64: ${{ secrets.CHATTER_RELEASE_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.CHATTER_RELEASE_CERT_PASSWORD }}
         run: |
-          set -euo pipefail
+          set -euxo pipefail
           KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
           CERT_PATH="$RUNNER_TEMP/chatter-release-cert.p12"
 
