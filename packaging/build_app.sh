@@ -73,8 +73,14 @@ plutil -insert NSHighResolutionCapable -bool true "$PLIST" 2>/dev/null || true
 #
 # CHATTER_CODESIGN_IDENTITY lets a caller (CI) point this at a different
 # imported identity — e.g. "Chatter Release" — instead of the local dev one.
+#
+# Deliberately not `-v` here: that flag means "only show identities with a
+# trusted chain", which a self-signed certificate never has regardless of
+# whether it's perfectly usable for signing — trust only matters for
+# verifying a signature later, not for creating one. `-v` made this check
+# report "not found" even when the identity was imported and working fine.
 CODESIGN_IDENTITY="${CHATTER_CODESIGN_IDENTITY:-Chatter Local Dev}"
-if ! security find-identity -v -p codesigning | grep -q "$CODESIGN_IDENTITY"; then
+if ! security find-identity -p codesigning | grep -q "$CODESIGN_IDENTITY"; then
     echo "warning: '$CODESIGN_IDENTITY' certificate not found; falling back to ad-hoc signing." >&2
     echo "         Run packaging/setup_dev_cert.sh once to make permission grants survive rebuilds." >&2
     CODESIGN_IDENTITY="-"

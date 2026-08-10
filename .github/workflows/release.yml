@@ -10,10 +10,10 @@ permissions:
 jobs:
   macos-arm64:
     runs-on: macos-14
-    # A signing step hanging on an unanswerable GUI prompt once burned 6
-    # hours of runner time before GitHub's own default limit stepped in.
-    # This build normally finishes in a few minutes — fail fast instead.
-    timeout-minutes: 5
+    # A hung step (see git history — resolved) once burned 6 hours of
+    # runner time before GitHub's own default limit stepped in. This build
+    # normally finishes in a few minutes — fail fast instead of that again.
+    timeout-minutes: 15
     env:
       KEYCHAIN_PATH: ${{ github.workspace }}/chatter-release.keychain-db
     steps:
@@ -37,7 +37,7 @@ jobs:
           CERT_P12_B64: ${{ secrets.CHATTER_RELEASE_CERT_P12 }}
           CERT_PASSWORD: ${{ secrets.CHATTER_RELEASE_CERT_PASSWORD }}
         run: |
-          set -euxo pipefail
+          set -euo pipefail
           KEYCHAIN_PASSWORD="$(openssl rand -base64 24)"
           CERT_PATH="$RUNNER_TEMP/chatter-release-cert.p12"
 
@@ -46,41 +46,22 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          # -A (instead of -T per-tool trust + set-key-partition-list) grants
-          # every process blanket access to the imported key. That would be
-          # too broad on a real, always-on Mac, but this keychain is created
-          # fresh for this one job and destroyed at the end of it, so there's
-          # nothing else on the machine for the broader grant to expose.
-          # set-key-partition-list is the CLI-only path to the same narrow
-          # trust packaging/setup_dev_cert.sh uses locally, and it is known
-          # to hang waiting on a GUI authorization prompt that can never be
-          # answered on a headless CI runner — it hung silently for 6 hours
-          # here before GitHub force-killed the job.
-          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CERT_PASSWORD" -A
-          # Replace the search list outright rather than merging in the
-          # existing entries via a subshell — GitHub's own documented
-          # recipe for this does the same, and the merge form was the
-          # second thing that hung here with no output at all.
+          # -T pre-authorizes codesign/security specifically, which is
+          # enough for codesign to actually use the key — no partition-list
+          # or trust-settings step needed. (An earlier version of this step
+          # tried set-key-partition-list and then security add-trusted-cert
+          # to chase a "certificate not found" warning from build_app.sh;
+          # both hung indefinitely waiting on a GUI authorization prompt
+          # nothing can answer on a headless runner, once for 6 hours before
+          # GitHub's own limit intervened. Neither was actually needed: that
+          # warning was build_app.sh's own `find-identity -v` filtering out
+          # every self-signed cert by trust chain, not a real signing
+          # failure — fixed there instead, see packaging/build_app.sh.)
+          security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CERT_PASSWORD" \
+              -T /usr/bin/codesign -T /usr/bin/security
           security list-keychains -d user -s "$KEYCHAIN_PATH"
 
-          # Importing the identity is not enough — `security find-identity -v`
-          # (what build_app.sh checks) only lists identities it considers
-          # "valid", and a self-signed cert with no trusted root needs to be
-          # explicitly marked as trusted for code signing before it counts.
-          #
-          # macOS's system openssl is LibreSSL, which has no -legacy flag at
-          # all (it never gated legacy algorithms behind one); a newer
-          # OpenSSL 3.x, like the one used to originally export this p12,
-          # needs -legacy to read the same legacy-format archive. Detect
-          # which one this runner has instead of hardcoding either.
-          LEGACY_FLAG=""
-          openssl pkcs12 -help 2>&1 | grep -q -- "-legacy" && LEGACY_FLAG="-legacy"
-          CERT_ONLY_PATH="$RUNNER_TEMP/chatter-release-cert.crt"
-          openssl pkcs12 -in "$CERT_PATH" -clcerts -nokeys -passin "pass:$CERT_PASSWORD" $LEGACY_FLAG \
-              | openssl x509 -out "$CERT_ONLY_PATH"
-          security add-trusted-cert -p codeSign -k "$KEYCHAIN_PATH" "$CERT_ONLY_PATH"
-
-          rm -f "$CERT_PATH" "$CERT_ONLY_PATH"
+          rm -f "$CERT_PATH"
 
       - name: Build the app
         env:
