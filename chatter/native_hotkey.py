@@ -68,20 +68,24 @@ class RawKeyListener:
         self._tap = None
 
     def _callback(self, proxy, event_type, event, refcon):
+        # CGEventTap callbacks have a very small timeout. Do not log, query
+        # AppKit, or do any other blocking work here: macOS disables the tap
+        # when this callback is slow, which makes a global hotkey appear to
+        # work only while Chatter is frontmost.
         try:
             disabled_events = {
                 getattr(Quartz, "kCGEventTapDisabledByTimeout", -1),
                 getattr(Quartz, "kCGEventTapDisabledByUserInput", -2),
             }
             if event_type in disabled_events and self._tap is not None:
-                logger.warning("hotkey event tap was disabled; re-enabling it")
                 Quartz.CGEventTapEnable(self._tap, True)
                 return event
-            if event_type == Quartz.kCGEventFlagsChanged:
-                code = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
-                if code == self._keycode:
-                    is_down = bool(Quartz.CGEventGetFlags(event) & self._flag_mask)
-                    (self._on_down if is_down else self._on_up)()
+            if event_type != Quartz.kCGEventFlagsChanged:
+                return event
+            code = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
+            if code == self._keycode:
+                is_down = bool(Quartz.CGEventGetFlags(event) & self._flag_mask)
+                (self._on_down if is_down else self._on_up)()
         except Exception:
             logger.exception("hotkey tap callback failed")
         return event
