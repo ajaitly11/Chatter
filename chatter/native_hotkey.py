@@ -66,6 +66,11 @@ class RawKeyListener:
         self._thread = None
         self._run_loop = None
         self._tap = None
+        self._monitor_thread = None
+        self._monitor_stop = threading.Event()
+        self._callback_count = 0
+        self._hotkey_count = 0
+        self._disabled_event_count = 0
 
     def _callback(self, proxy, event_type, event, refcon):
         # CGEventTap callbacks have a very small timeout. Do not log, query
@@ -78,12 +83,15 @@ class RawKeyListener:
                 getattr(Quartz, "kCGEventTapDisabledByUserInput", -2),
             }
             if event_type in disabled_events and self._tap is not None:
+                self._disabled_event_count += 1
                 Quartz.CGEventTapEnable(self._tap, True)
                 return event
             if event_type != Quartz.kCGEventFlagsChanged:
                 return event
+            self._callback_count += 1
             code = Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)
             if code == self._keycode:
+                self._hotkey_count += 1
                 is_down = bool(Quartz.CGEventGetFlags(event) & self._flag_mask)
                 (self._on_down if is_down else self._on_up)()
         except Exception:
@@ -114,6 +122,27 @@ class RawKeyListener:
         self._run_loop = Quartz.CFRunLoopGetCurrent()
         Quartz.CFRunLoopAddSource(self._run_loop, source, Quartz.kCFRunLoopCommonModes)
         Quartz.CGEventTapEnable(tap, True)
+
+        # Keep diagnostics off the event-tap callback. This monitor is only
+        # for distinguishing "the OS delivered no cross-app events" from
+        # "the event arrived but downstream Qt handling failed".
+        self._monitor_stop.clear()
+
+        def _monitor():
+            while not self._monitor_stop.wait(5.0):
+                try:
+                    logger.info(
+                        "hotkey tap health: enabled=%s callbacks=%d hotkeys=%d disabled_events=%d",
+                        bool(Quartz.CGEventTapIsEnabled(tap)),
+                        self._callback_count,
+                        self._hotkey_count,
+                        self._disabled_event_count,
+                    )
+                except Exception:
+                    logger.exception("hotkey tap health check failed")
+
+        self._monitor_thread = threading.Thread(target=_monitor, daemon=True)
+        self._monitor_thread.start()
         logger.info("raw hotkey tap running for keycode %d", self._keycode)
         Quartz.CFRunLoopRun()
 
@@ -128,10 +157,14 @@ class RawKeyListener:
         return self._thread is not None and self._thread.is_alive()
 
     def stop(self):
+        self._monitor_stop.set()
         if self._run_loop is not None:
             Quartz.CFRunLoopStop(self._run_loop)
             self._run_loop = None
         if self._thread is not None and self._thread is not threading.current_thread():
             self._thread.join(timeout=0.5)
+        if self._monitor_thread is not None and self._monitor_thread is not threading.current_thread():
+            self._monitor_thread.join(timeout=0.5)
         self._thread = None
+        self._monitor_thread = None
         self._tap = None

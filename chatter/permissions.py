@@ -139,8 +139,9 @@ def can_create_input_monitoring_tap() -> bool:
 
     CGPreflightListenEventAccess can lag behind the System Settings toggle,
     and CGRequestListenEventAccess does not reliably add an app to the list
-    by itself. A real, short-lived tap is the useful readiness check and also
-    gives macOS the event-tap registration it needs for this bundle.
+    by itself. This is diagnostic only: a successful tap creation is not
+    proof that macOS will deliver events from other applications, so
+    readiness must use CGPreflightListenEventAccess().
     """
     try:
         mask = Quartz.CGEventMaskBit(Quartz.kCGEventFlagsChanged)
@@ -162,7 +163,10 @@ def can_create_input_monitoring_tap() -> bool:
 
 
 def input_monitoring_available() -> bool:
-    return is_input_monitoring_trusted() or can_create_input_monitoring_tap()
+    # CGEventTapCreate can succeed for a process that is still not authorized
+    # to observe other applications. Treating that probe as authorization
+    # made Chatter appear healthy while it only received its own key events.
+    return is_input_monitoring_trusted()
 
 
 def request_input_monitoring() -> bool:
@@ -176,10 +180,14 @@ def request_input_monitoring() -> bool:
         preflight_before = is_input_monitoring_trusted()
         requested = bool(Quartz.CGRequestListenEventAccess())
         probe = can_create_input_monitoring_tap()
-        available = preflight_before or requested or probe
+        # The request result and tap probe only mean that macOS accepted the
+        # request/created a local tap. Re-read the official authorization
+        # state; only that state proves cross-application keyboard delivery.
+        preflight_after = is_input_monitoring_trusted()
+        available = preflight_after
         logger.info(
-            "Input Monitoring request: preflight_before=%s request_result=%s tap_probe=%s available=%s",
-            preflight_before, requested, probe, available,
+            "Input Monitoring request: preflight_before=%s request_result=%s tap_probe=%s preflight_after=%s available=%s",
+            preflight_before, requested, probe, preflight_after, available,
         )
         return available
     except Exception:

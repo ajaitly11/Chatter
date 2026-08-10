@@ -516,6 +516,15 @@ def run():
         config.update(onboarding_complete=True, onboarding_dismissed=False)
         cfg = config.load()
 
+    logger.info(
+        "permission preflight: microphone=%s input_monitoring_preflight=%s "
+        "input_monitoring_available=%s accessibility=%s",
+        permissions.is_microphone_authorized(),
+        permissions.is_input_monitoring_trusted(),
+        permissions.input_monitoring_available(),
+        permissions.is_trusted(),
+    )
+
     if cfg.get("push_to_talk_enabled", True) and permissions_ready():
         hotkey.start()
     elif cfg.get("push_to_talk_enabled", True):
