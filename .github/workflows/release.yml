@@ -109,6 +109,7 @@ jobs:
       - name: Update landing page to this release
         env:
           CHATTER_VERSION: ${{ github.ref_name }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git fetch origin main
@@ -119,10 +120,13 @@ jobs:
           git add docs/index.html
           if git diff --cached --quiet; then
             echo "Landing page already points to $CHATTER_VERSION"
-            exit 0
+          else
+            git commit -m "docs: point download page to $CHATTER_VERSION"
+            git push origin HEAD:main
           fi
-          git commit -m "docs: point download page to $CHATTER_VERSION"
-          git push origin HEAD:main
+          # Pushes made with GITHUB_TOKEN do not start another workflow. Use
+          # an explicit dispatch so the Pages deployment still runs.
+          gh workflow run pages.yml --ref main
 
       - name: Remove temporary keychain
         if: always()
