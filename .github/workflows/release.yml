@@ -57,8 +57,11 @@ jobs:
           # answered on a headless CI runner — it hung silently for 6 hours
           # here before GitHub force-killed the job.
           security import "$CERT_PATH" -k "$KEYCHAIN_PATH" -P "$CERT_PASSWORD" -A
-          security list-keychains -d user -s "$KEYCHAIN_PATH" \
-              "$(security list-keychains -d user | sed 's/"//g' | xargs)"
+          # Replace the search list outright rather than merging in the
+          # existing entries via a subshell — GitHub's own documented
+          # recipe for this does the same, and the merge form was the
+          # second thing that hung here with no output at all.
+          security list-keychains -d user -s "$KEYCHAIN_PATH"
 
           # Importing the identity is not enough — `security find-identity -v`
           # (what build_app.sh checks) only lists identities it considers
