@@ -96,6 +96,15 @@ Push-to-talk needs three macOS permissions, granted to Chatter:
 3. **System Settings → Privacy & Security → Microphone** — grant when
    prompted, needed to record your voice.
 
+The permission entry must be the installed app at `/Applications/Chatter.app`.
+If you see an old **Python 3** entry or an older Chatter entry, remove the
+stale entry, click **+**, choose `/Applications/Chatter.app`, and turn Chatter
+on. The packaged release is identified as Chatter, and its onboarding checks
+macOS's actual cross-application authorization rather than accepting a
+temporary test listener. After enabling it, return to Chatter and continue
+once; quitting and reopening the same installed release should not require
+you to repeat setup.
+
 The Settings tab lets you choose and test the input device, toggle local AI
 cleanup, and choose an automatic writing context. Automatic context uses only
 the foreground app and window title to distinguish email, notes, coding/AI,
@@ -190,9 +199,10 @@ Nemotron ASR path.
 ## Known limitations
 
 - **Permission reset after repackaging**: macOS privacy grants are tied to the
-  executable identity. Rebuilding or moving the frozen app can require
-  granting Chatter access again; this is expected and does not affect the
-  model or configuration files.
+  executable identity. The public DMG uses a stable release signing identity,
+  but local ad-hoc builds, development certificates, or moving a locally
+  rebuilt app can require granting Chatter access again; this does not affect
+  the model or configuration files.
 - **Not portable**: `Chatter.app` hardcodes this checkout's absolute paths at
   build time. Cloning the repo elsewhere requires rebuilding it there with
   `./packaging/build_app.sh`.
