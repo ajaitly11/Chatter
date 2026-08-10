@@ -97,13 +97,13 @@ Push-to-talk needs three macOS permissions, granted to Chatter:
    prompted, needed to record your voice.
 
 The permission entry must be the installed app at `/Applications/Chatter.app`.
-If you see an old **Python 3** entry or an older Chatter entry, remove the
-stale entry, click **+**, choose `/Applications/Chatter.app`, and turn Chatter
-on. The packaged release is identified as Chatter, and its onboarding checks
-macOS's actual cross-application authorization rather than accepting a
-temporary test listener. After enabling it, return to Chatter and continue
-once; quitting and reopening the same installed release should not require
-you to repeat setup.
+Enable Chatter when macOS asks for permission; if Chatter is missing, click
+**+**, choose `/Applications/Chatter.app`, and turn Chatter on. Do not change
+permissions for unrelated apps. Chatter's onboarding checks macOS's actual
+cross-application authorization rather than accepting a temporary test
+listener. After enabling Chatter, return to the app and continue once;
+quitting and reopening the same installed release should not require you to
+repeat setup.
 
 The Settings tab lets you choose and test the input device, toggle local AI
 cleanup, and choose an automatic writing context. Automatic context uses only

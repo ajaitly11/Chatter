@@ -66,11 +66,20 @@ jobs:
       - name: Build the app
         env:
           CHATTER_CODESIGN_IDENTITY: "Chatter Release"
+          CHATTER_VERSION: ${{ github.ref_name }}
+          CHATTER_BUILD_NUMBER: ${{ github.run_number }}
         run: |
           python -m venv venv
           venv/bin/python -m pip install --upgrade pip
           venv/bin/python -m pip install -r requirements.txt
+          venv/bin/python -m unittest discover -s tests -q
           ./packaging/build_app.sh
+
+      - name: Verify app version matches release tag
+        run: |
+          expected="${GITHUB_REF_NAME#v}"
+          actual="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Chatter.app/Contents/Info.plist)"
+          test "$actual" = "$expected"
 
       - name: Create DMG
         run: |
@@ -96,6 +105,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" Chatter-macOS-arm64.dmg --title "Chatter $GITHUB_REF_NAME" --generate-notes
+
+      - name: Update landing page to this release
+        env:
+          CHATTER_VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          git checkout -B release-page origin/main
+          python packaging/update_release_page.py "$CHATTER_VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/index.html
+          if git diff --cached --quiet; then
+            echo "Landing page already points to $CHATTER_VERSION"
+            exit 0
+          fi
+          git commit -m "docs: point download page to $CHATTER_VERSION"
+          git push origin HEAD:main
 
       - name: Remove temporary keychain
         if: always()

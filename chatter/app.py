@@ -491,9 +491,8 @@ def run():
     )
     if needs_onboarding:
         # Register this frozen bundle with macOS before the onboarding dialog
-        # opens. This makes the permission entry appear as Chatter (rather
-        # than leaving the user with the old Python 3 entry from the former
-        # thin-wrapper build) and lets the dialog explain the next step.
+        # opens. This makes the permission entry appear as Chatter and lets
+        # the dialog explain the next step.
         if not permissions.is_microphone_authorized():
             permissions.request_microphone_access()
         onboarding = OnboardingWindow(window)

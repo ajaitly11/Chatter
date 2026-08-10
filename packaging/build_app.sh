@@ -1,13 +1,42 @@
 #!/bin/bash
 # Builds a real Chatter.app with a frozen Mach-O executable. The old bundle
-# exec'd the venv's Python, which made macOS privacy panes identify the app as
-# Python 3 instead of Chatter.
+# executed the development Python runtime, which made macOS privacy panes
+# identify the app as a runtime instead of Chatter.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 APP_DIR="$PROJECT_DIR/Chatter.app"
 VENV_PYTHON="$PROJECT_DIR/venv/bin/python"
+
+# Releases pass the tag through CHATTER_VERSION. Local builds fall back to the
+# nearest release tag so the app still has a useful version in Finder and
+# System Settings. The internal build number is kept separate, as macOS uses
+# it to distinguish two builds of the same public version.
+VERSION="${CHATTER_VERSION:-}"
+if [ -z "$VERSION" ] && [[ "${GITHUB_REF_NAME:-}" == v* ]]; then
+    VERSION="${GITHUB_REF_NAME#v}"
+fi
+if [ -z "$VERSION" ]; then
+    RELEASE_TAG="$(git -C "$PROJECT_DIR" describe --tags --match 'v[0-9]*' --exact-match 2>/dev/null || true)"
+    if [ -z "$RELEASE_TAG" ]; then
+        RELEASE_TAG="$(git -C "$PROJECT_DIR" describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || true)"
+    fi
+    VERSION="${RELEASE_TAG#v}"
+fi
+VERSION="${VERSION#v}"
+if [ -z "$VERSION" ]; then
+    VERSION="0.0.0"
+fi
+if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+    echo "error: release version must look like 1.2.3; got '$VERSION'" >&2
+    exit 1
+fi
+BUILD_NUMBER="${CHATTER_BUILD_NUMBER:-${GITHUB_RUN_NUMBER:-1}}"
+if [[ ! "$BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+    echo "error: build number must be numeric; got '$BUILD_NUMBER'" >&2
+    exit 1
+fi
 
 if [ ! -x "$VENV_PYTHON" ]; then
     echo "error: $VENV_PYTHON not found. Run: python3 -m venv venv && venv/bin/python -m pip install -r requirements.txt" >&2
@@ -50,8 +79,8 @@ plutil -replace CFBundleName -string "Chatter" "$PLIST"
 plutil -replace CFBundleDisplayName -string "Chatter" "$PLIST"
 plutil -replace CFBundleIdentifier -string "com.chatter.app" "$PLIST"
 plutil -replace CFBundleExecutable -string "Chatter" "$PLIST"
-plutil -replace CFBundleShortVersionString -string "1.0" "$PLIST"
-plutil -replace CFBundleVersion -string "1" "$PLIST"
+plutil -replace CFBundleShortVersionString -string "$VERSION" "$PLIST"
+plutil -replace CFBundleVersion -string "$BUILD_NUMBER" "$PLIST"
 plutil -insert CFBundleSpokenName -string "Chatter" "$PLIST" 2>/dev/null || true
 plutil -insert LSUIElement -bool false "$PLIST" 2>/dev/null || true
 plutil -insert LSMultipleInstancesProhibited -bool true "$PLIST" 2>/dev/null || true
@@ -88,4 +117,5 @@ fi
 codesign --force --deep --sign "$CODESIGN_IDENTITY" --identifier com.chatter.app "$APP_DIR"
 
 echo "Built $APP_DIR"
+echo "Version: $VERSION (build $BUILD_NUMBER)"
 echo "Executable: $APP_DIR/Contents/MacOS/Chatter"

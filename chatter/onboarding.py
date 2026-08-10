@@ -255,7 +255,7 @@ class OnboardingWindow(QDialog):
                     self._restart_and_recheck()
                 else:
                     self._show_terminal_permission_state(
-                        "macOS is still not reporting Accessibility for this exact Chatter app. In System Settings → Privacy & Security → Accessibility, remove any old Chatter entry, click +, choose /Applications/Chatter.app, and turn it on. Chatter will not keep restarting or looping."
+                        "macOS is still not reporting Accessibility for Chatter. In System Settings → Privacy & Security → Accessibility, turn on Chatter. If Chatter is missing, click + and choose /Applications/Chatter.app. Chatter will not keep restarting or looping."
                     )
         elif self._step == 2:
             if permissions.input_monitoring_available():
@@ -275,7 +275,7 @@ class OnboardingWindow(QDialog):
                     self._restart_and_recheck()
                 else:
                     self._show_terminal_permission_state(
-                        "macOS is still not reporting Input Monitoring for this exact Chatter app. In System Settings → Privacy & Security → Input Monitoring, remove any old Chatter entry, click +, choose /Applications/Chatter.app, and turn it on. Chatter will not keep restarting or looping."
+                        "macOS is still not reporting Input Monitoring for Chatter. In System Settings → Privacy & Security → Input Monitoring, turn on Chatter. If Chatter is missing, click + and choose /Applications/Chatter.app. Chatter will not keep restarting or looping."
                     )
         else:
             self.accept()
