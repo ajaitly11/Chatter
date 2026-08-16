@@ -6,15 +6,10 @@ on:
 
 permissions:
   contents: write
-  pages: write
-  id-token: write
 
 jobs:
   macos-arm64:
     runs-on: macos-14
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     # A hung step (see git history — resolved) once burned 6 hours of
     # runner time before GitHub's own default limit stepped in. This build
     # normally finishes in a few minutes — fail fast instead of that again.
@@ -129,21 +124,6 @@ jobs:
             git commit -m "docs: point download page to $CHATTER_VERSION"
             git push origin HEAD:main
           fi
-
-      # The release job already has the Pages permissions it needs. Deploying
-      # here avoids trying to dispatch pages.yml with GITHUB_TOKEN, which
-      # GitHub intentionally rejects with HTTP 403 to prevent workflow loops.
-      - name: Configure GitHub Pages
-        uses: actions/configure-pages@v5
-
-      - name: Upload landing page artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: docs
-
-      - name: Deploy landing page
-        id: deployment
-        uses: actions/deploy-pages@v4
 
       - name: Remove temporary keychain
         if: always()
