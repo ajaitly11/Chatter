@@ -43,6 +43,35 @@ SUPPORTED_HOTKEYS = [
     ),
 ]
 
+# These values are persisted by app.py rather than being part of the visual
+# Settings surface. Keeping the default explicit here lets older config files
+# continue to mean hold-to-talk. Double-tap is opt-in: only that mode waits for
+# a second edge, so the default hold path remains instantaneous.
+HOLD_TO_TALK = "hold"
+DOUBLE_TAP_PERSISTENT = "double_tap"
+# Backwards-compatible name for callers that used the first prototype's
+# toggle mode. It now means the safer double-tap gesture.
+TOGGLE_PERSISTENT = DOUBLE_TAP_PERSISTENT
+ACTIVATION_MODE_OPTIONS = (
+    (HOLD_TO_TALK, "Hold to talk"),
+    (DOUBLE_TAP_PERSISTENT, "Double-tap to start/stop hands-free"),
+)
+
+
+def normalize_activation_mode(value: object) -> str:
+    """Return a supported activation mode, defaulting safely to hold-to-talk."""
+    supported = {mode for mode, _label in ACTIVATION_MODE_OPTIONS}
+    if value == "toggle":
+        return DOUBLE_TAP_PERSISTENT
+    return value if isinstance(value, str) and value in supported else HOLD_TO_TALK
+
+
+def _dispatch_modifier_edge(previously_down: bool, is_down: bool) -> tuple[bool, bool]:
+    """Return whether a modifier transition is new, and its new state."""
+    if previously_down == is_down:
+        return False, previously_down
+    return True, is_down
+
 _FLAG_MASK_BY_KEYCODE = {
     60: Quartz.kCGEventFlagMaskShift,       # Right Shift
     61: Quartz.kCGEventFlagMaskAlternate,   # Right Option
@@ -71,6 +100,7 @@ class RawKeyListener:
         self._callback_count = 0
         self._hotkey_count = 0
         self._disabled_event_count = 0
+        self._key_is_down = False
 
     def _callback(self, proxy, event_type, event, refcon):
         # CGEventTap callbacks have a very small timeout. Do not log, query
@@ -93,6 +123,11 @@ class RawKeyListener:
             if code == self._keycode:
                 self._hotkey_count += 1
                 is_down = bool(Quartz.CGEventGetFlags(event) & self._flag_mask)
+                dispatch, self._key_is_down = _dispatch_modifier_edge(
+                    self._key_is_down, is_down,
+                )
+                if not dispatch:
+                    return event
                 (self._on_down if is_down else self._on_up)()
         except Exception:
             logger.exception("hotkey tap callback failed")
@@ -168,3 +203,4 @@ class RawKeyListener:
         self._thread = None
         self._monitor_thread = None
         self._tap = None
+        self._key_is_down = False

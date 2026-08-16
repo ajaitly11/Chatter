@@ -11,6 +11,57 @@ from pathlib import Path
 
 import numpy as np
 
+
+# transcribe.cpp's timestamp kinds are ordered by the finest-grained data they
+# can return.  ``auto`` is intentionally not in this map: it asks the model to
+# choose its supported default and is the safe fallback for models that expose
+# no timestamp data.
+_TIMESTAMP_RANK = {
+    "none": 0,
+    "segment": 1,
+    "word": 2,
+    "token": 3,
+}
+_UNSUPPORTED_TIMESTAMPS_STATUS = 12
+
+
+def _timestamp_request_for_model(model, requested: str) -> str:
+    """Select a supported explicit timestamp request for a loaded model.
+
+    File transcription historically asks for word timestamps so the result
+    can be persisted with word timings.  That is not valid for every model:
+    Whisper large-v3 Turbo exposes segment timestamps and Moonshine exposes
+    none.  ``Model.capabilities.max_timestamp_kind`` lets us avoid making a
+    native call that is guaranteed to fail, while ``auto`` remains the safe
+    choice when capabilities are unavailable or newer than this client.
+    """
+    if requested not in _TIMESTAMP_RANK or requested == "none":
+        return requested
+
+    try:
+        max_kind = str(model.capabilities.max_timestamp_kind).lower()
+    except Exception:
+        return requested
+
+    requested_rank = _TIMESTAMP_RANK[requested]
+    max_rank = _TIMESTAMP_RANK.get(max_kind)
+    if max_rank is None or requested_rank <= max_rank:
+        return requested
+    if max_kind == "none":
+        return "auto"
+    return max_kind
+
+
+def _is_unsupported_timestamps_error(exc: Exception) -> bool:
+    """Recognize transcribe.cpp's status-12 timestamp capability error."""
+    status = getattr(exc, "status", None)
+    if status is not None:
+        return status == _UNSUPPORTED_TIMESTAMPS_STATUS
+    # Keep the fallback useful if an application wrapper preserves only the
+    # native error text and drops transcribe_cpp.TranscribeError.status.
+    return "unsupported timestamp granularity" in str(exc).lower()
+
+
 def _models_dir() -> Path:
     """Find external GGUFs in both source checkouts and frozen app bundles."""
     configured = os.environ.get("CHATTER_PROJECT_DIR", "").strip()
@@ -74,10 +125,19 @@ def _field(w, name: str):
 
 
 def words_to_srt(words) -> str:
-    """One SRT cue per word, using transcribe.cpp's per-word timestamps
-    (Result.words) rather than per-segment/phrase timestamps."""
+    """One SRT cue per word, using transcribe.cpp's per-word timestamps."""
+    return _timed_items_to_srt(words)
+
+
+def segments_to_srt(segments) -> str:
+    """One SRT cue per model segment for models without word timestamps."""
+    return _timed_items_to_srt(segments)
+
+
+def _timed_items_to_srt(items) -> str:
+    """Serialize word- or segment-shaped timestamp rows as SRT."""
     lines = []
-    for i, w in enumerate(words, start=1):
+    for i, w in enumerate(items, start=1):
         lines.append(str(i))
         start_s = _field(w, "t0_ms") / 1000
         end_s = _field(w, "t1_ms") / 1000
@@ -117,7 +177,27 @@ class TranscriptionService:
     def transcribe(self, pcm: np.ndarray, model_path: str, backend: str, **run_kwargs):
         with self._lock:
             self._ensure_session(model_path, backend)
-            return self._session.run(pcm, **run_kwargs)
+            # Be explicit about the native default.  The file worker currently
+            # requests ``word`` for persisted timings, but that request is not
+            # valid for segment-only or timestamp-less models.
+            requested = run_kwargs.setdefault("timestamps", "auto")
+            run_kwargs["timestamps"] = _timestamp_request_for_model(
+                self._model, requested
+            )
+            try:
+                return self._session.run(pcm, **run_kwargs)
+            except Exception as exc:
+                # Capabilities can be stale when the Python binding and native
+                # provider differ.  Retry once with the API's model-selected
+                # default, but never hide unrelated failures or loop forever.
+                if (
+                    run_kwargs["timestamps"] != "auto"
+                    and _is_unsupported_timestamps_error(exc)
+                ):
+                    retry_kwargs = dict(run_kwargs)
+                    retry_kwargs["timestamps"] = "auto"
+                    return self._session.run(pcm, **retry_kwargs)
+                raise
 
     def warm_up(self, model_path: str | None, backend: str) -> bool:
         """Load the model and session ahead of the first real utterance.

@@ -23,12 +23,27 @@ DEFAULTS = {
     "llama_mtp_model_path": "",
     "llama_mtp_tokens": 4,
     "push_to_talk_enabled": True,
+    # The status-item icon is optional. Chatter remains available from the
+    # Dock/Launchpad when the user hides it.
+    "menu_bar_icon_enabled": True,
+    # Update checks only read the public GitHub release record and can be
+    # disabled. No transcript or account data is sent.
+    "updates_enabled": True,
+    "last_update_check": 0.0,
+    "notified_update_version": "",
+    # Hold keeps the original immediate workflow. Double-tap lets users start
+    # and stop one persistent dictation session with the same hotkey.
+    "hotkey_activation_mode": "hold",
     # macOS virtual keycode for the push-to-talk hold key. Defaults to Right
     # Shift (60); see chatter/native_hotkey.py for other supported keycodes.
     "hotkey_keycode": 60,
     # Optional batch model for file transcription. Push-to-talk uses the
     # separate streaming_model_path and does not run a second ASR pass.
     "whisper_model_path": "",
+    # Word timing is the useful default for subtitle export. Users can switch
+    # to phrase timing when they prefer Whisper large-v3 Turbo or another
+    # model that does not expose per-word timestamps.
+    "file_timestamp_mode": "word",
     # Push-to-talk model: one streaming-capable local ASR session from press
     # through finalization.
     "streaming_model_path": "",

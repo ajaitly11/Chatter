@@ -10,7 +10,7 @@ import traceback
 from pathlib import Path
 
 import numpy as np
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, QTimer, Qt, pyqtSignal
 
 from . import config
 from . import dictionary
@@ -20,7 +20,12 @@ from . import paste_action
 from . import sound
 from .audio_capture import SAMPLE_RATE, StreamingMicRecorder
 from .context import CaptureContext, current_context
-from .native_hotkey import RawKeyListener
+from .native_hotkey import (
+    DOUBLE_TAP_PERSISTENT,
+    HOLD_TO_TALK,
+    RawKeyListener,
+    normalize_activation_mode,
+)
 from .formatter import LiveCleanupCoordinator
 from .transcription_service import streaming_service
 
@@ -32,6 +37,8 @@ logger = logging.getLogger("chatter.hotkey")
 # recording keeps running for a short grace period after key-up before the
 # stream actually closes.
 RELEASE_GRACE_SECONDS = 0.4
+PERSISTENT_RELEASE_GRACE_SECONDS = 0.16
+DOUBLE_TAP_WINDOW_SECONDS = 0.45
 
 # Frames quieter than this (RMS) are treated as silence, both for trimming
 # the clip's edges and for deciding whether anything was said at all. Keep
@@ -128,6 +135,11 @@ class PushToTalkController(QObject):
         self._press_started_at = None
         self._first_preview_logged = False
         self._capture_context: CaptureContext | None = None
+        self._double_tap_waiting = False
+        self._double_tap_timer = QTimer(self)
+        self._double_tap_timer.setSingleShot(True)
+        self._double_tap_timer.setInterval(round(DOUBLE_TAP_WINDOW_SECONDS * 1000))
+        self._double_tap_timer.timeout.connect(self._expire_double_tap)
         self._live_cleanup = LiveCleanupCoordinator(formatter, self._on_live_cleanup)
         self._key_down.connect(self._on_press, Qt.ConnectionType.QueuedConnection)
         self._key_up.connect(self._on_release, Qt.ConnectionType.QueuedConnection)
@@ -149,6 +161,10 @@ class PushToTalkController(QObject):
     def _enqueue_listener_error(self, message: str):
         self.error.emit(message)
 
+    def _expire_double_tap(self):
+        self._double_tap_waiting = False
+        logger.debug("double-tap window expired")
+
     def stop(self):
         if self._recording:
             self._recording = False
@@ -163,6 +179,7 @@ class PushToTalkController(QObject):
 
     def shutdown(self):
         self.stop()
+        self._double_tap_timer.stop()
         self._live_cleanup.shutdown()
 
     @property
@@ -171,8 +188,40 @@ class PushToTalkController(QObject):
         return self._listener is not None and self._listener.running
 
     def _on_press(self):
+        activation_mode = normalize_activation_mode(
+            config.load().get("hotkey_activation_mode", HOLD_TO_TALK)
+        )
+        if activation_mode == DOUBLE_TAP_PERSISTENT:
+            self._on_double_tap_press()
+            return
         if self._recording:
             return
+        self._start_recording()
+
+    def _on_double_tap_press(self):
+        """Start/stop one persistent session with a double-tap gesture."""
+        if self._processing:
+            logger.info("double-tap ignored — still finishing the previous utterance")
+            self.status_changed.emit("Still finishing up…")
+            return
+        if self._double_tap_waiting:
+            self._double_tap_timer.stop()
+            self._double_tap_waiting = False
+            if self._recording:
+                logger.info("double-tap confirmed — stopping hands-free session")
+                self._on_release(from_toggle=True)
+            else:
+                logger.info("double-tap confirmed — starting hands-free session")
+                self._start_recording()
+            return
+        self._double_tap_waiting = True
+        self._double_tap_timer.start()
+        if self._recording:
+            self.status_changed.emit("Double-tap again to stop")
+        else:
+            self.status_changed.emit("Double-tap again to start hands-free")
+
+    def _start_recording(self):
         if self._processing:
             logger.info("press ignored — still finishing the previous utterance")
             self.status_changed.emit("Still finishing up…")
@@ -306,8 +355,16 @@ class PushToTalkController(QObject):
             except Exception:
                 logger.exception("failed to reset streaming session")
 
-    def _on_release(self):
+    def _on_release(self, from_toggle: bool = False):
         if not self._recording:
+            return
+        if (
+            not from_toggle
+            and normalize_activation_mode(
+                config.load().get("hotkey_activation_mode", HOLD_TO_TALK)
+            ) == DOUBLE_TAP_PERSISTENT
+        ):
+            logger.debug("persistent dictation session: ignoring key-up")
             return
         self._recording = False
         self._processing = True
@@ -317,13 +374,21 @@ class PushToTalkController(QObject):
                 "hotkey hold duration before release: %.0fms",
                 (time.perf_counter() - self._press_started_at) * 1000,
             )
-        logger.info("recording released — keeping mic open for a %.1fs grace period", RELEASE_GRACE_SECONDS)
+        activation_mode = normalize_activation_mode(
+            config.load().get("hotkey_activation_mode", HOLD_TO_TALK)
+        )
+        grace_period = (
+            PERSISTENT_RELEASE_GRACE_SECONDS
+            if activation_mode == DOUBLE_TAP_PERSISTENT
+            else RELEASE_GRACE_SECONDS
+        )
+        logger.info("recording released — keeping mic open for a %.2fs grace period", grace_period)
         self.status_changed.emit("Finishing audio…")
         # Stop the mic (and thus the collector loop, via the sentinel it
         # queues) after the grace period rather than immediately, so
         # _finish's join() below waits for that trailing bit of audio
         # instead of missing it.
-        threading.Timer(RELEASE_GRACE_SECONDS, self._recorder.stop).start()
+        threading.Timer(grace_period, self._recorder.stop).start()
         threading.Thread(target=self._finish, daemon=True).start()
 
     def _finish(self):

@@ -51,6 +51,32 @@ class InsightsTests(unittest.TestCase):
         self.assertEqual(summary.pasted_count, 1)
         self.assertEqual(summary.average_processing_ms, 700)
         self.assertEqual(summary.contexts, (("Claude", 2),))
+        self.assertEqual(summary.daily_details[-1][1:], (3, 1, "Claude"))
+
+    def test_pace_ignores_sessions_without_audio_duration(self):
+        now = datetime(2026, 8, 9, 12, 0)
+        summary = summarize(
+            [
+                {"kind": "dictation", "text": "one two", "ts": now.timestamp(), "audio_seconds": 2},
+                {"kind": "dictation", "text": "one two three four five", "ts": now.timestamp()},
+            ],
+            now=now,
+            days=7,
+        )
+        self.assertEqual(summary.average_wpm, 60)
+        self.assertEqual(summary.pace_sessions, 1)
+
+    def test_contexts_only_include_named_apps(self):
+        now = datetime(2026, 8, 9, 12, 0)
+        summary = summarize(
+            [
+                {"kind": "dictation", "text": "named", "ts": now.timestamp(), "context_app": "Comet"},
+                {"kind": "dictation", "text": "unknown", "ts": now.timestamp(), "context_mode": "general"},
+            ],
+            now=now,
+            days=7,
+        )
+        self.assertEqual(summary.contexts, (("Comet", 1),))
 
 
 if __name__ == "__main__":

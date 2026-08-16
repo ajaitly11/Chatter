@@ -16,8 +16,8 @@ being something worth open-sourcing rather than a vibe-coded prototype.
   with distinct listening / processing / done / error poses and animations
   (bounce, tilt, settle-squash). Geometry unified across states after early
   versions drifted in size between them.
-- **Tabbed main window** (`main_window.py`) — Live Dictation, Files, Models,
-  Dictionary, History, Settings. Resizable/maximizable (was fixed-size),
+- **Tabbed main window** (`main_window.py`) — Live Dictation, Transcribed Files,
+  Dictionary, History, Insights, and Settings. Resizable/maximizable (was fixed-size),
   native titlebar recolored to match the app's own background instead of
   system gray.
 - **Squiggle tab underline** — hand-drawn wavy underline instead of a plain
@@ -243,9 +243,9 @@ being something worth open-sourcing rather than a vibe-coded prototype.
 - **Dictionary / correction UX** now has an explicit learning explanation and
   a searchable, high-confidence auto-learning path; a deeper visual pass can
   still follow real usage.
-- **Models tab** now uses progressive disclosure: active slots first, a short
-  in-app chooser second, and external model links only when the user asks for
-  them.
+- **Advanced model settings** now use progressive disclosure: active slots
+  first, a short in-app chooser second, and external model links only when the
+  user asks for them.
 - **MTP acceptance** remains optional and machine-specific: compare a short
   cleanup phrase with the toggle off/on before considering it a default.
 
@@ -265,9 +265,119 @@ being something worth open-sourcing rather than a vibe-coded prototype.
   transcript analytics leave the Mac.
 - Added the Insights destination to the Chatter menu-bar/native application
   menu and unit coverage for the summary calculations.
-- Added a pace gauge, context donut, and pipeline progress bars so Insights
-  communicates patterns visually instead of relying on large number tiles.
+- Reworked Insights around a visual “voice rhythm” story: a single speaking
+  pace meter with clear Slow / Conversational / Fast anchors, daily rhythm
+  bars, active-day signals, named-app destination bars, and a local-pipeline
+  health row. Empty states now say when there is not enough data rather than
+  drawing misleading zero-height charts. Sessions without recorded audio
+  duration are excluded from the pace calculation.
 - Added an always-visible Live Dictation setup card whenever Microphone,
   Input Monitoring, or Accessibility is missing. It resumes the existing
   one-time permission flow and the background permission watcher starts the
   hotkey listener as soon as the final toggle is recognized.
+
+### First UX/UI pass
+- Kept **Dictionary** as a first-class destination and renamed **Files** to
+  **Transcribed Files** so the two core product workflows are explicit.
+- Removed **Models** from the everyday top navigation. Model files, runtime
+  downloads, and experimental Gemma MTP controls now open from a calmer
+  **Advanced settings** dialog.
+- Added a plain-language local setup summary to Settings and enlarged the
+  default window slightly so the six core destinations have room to breathe.
+- Renamed the Dictionary experience to **Your growing vocabulary** and made
+  its local learning behavior more visible without claiming that Chatter
+  retrains the speech model.
+- Added **Dictations** as a first-class Insights metric alongside words,
+  speaking pace, daily volume, and learned vocabulary.
+- Applied the first UX cleanup pass to History and Settings: grouped cards,
+  shorter guidance, a discoverable push-to-talk toggle, a Writing card for
+  local cleanup/context, and a separate Advanced settings entry point for
+  technical model controls. History now searches the full local store while
+  keeping the screen readable by showing the latest 100 results.
+- History rows now use a vertical text/metadata structure, and clearing
+  history refreshes Insights immediately. Insights shows only named foreground
+  apps (it does not guess or surface a noisy “Unclassified” bucket) and
+  rebuilds its context rows cleanly on refresh.
+- Organized the menu-bar status item into Dictation, Writing, Open, and
+  Permissions groups, while the native Chatter application menu exposes the
+  same core destinations with a standard Settings… command.
+- Added restrained native Qt motion: a one-time window entrance fade, a short
+  tab-content fade, and a small press response for buttons and toggles. These
+  run on the UI thread and do not add work to audio capture or transcription.
+- Added a second responsive UX pass for full-screen windows: Insights and
+  Settings now use centered max-width content instead of stretching across
+  the display, and scrollable pages stay aligned to the top. Removed the
+  machine-specific “recommended setup” banner from everyday Settings.
+- Replaced the raw Insights bar chart with a local speaking calendar. Each
+  date uses a terracotta intensity gradient based on words spoken, keeps the
+  date number legible, and shows words, dictations, and top destination on
+  hover. The unused local pipeline metrics were removed from the main story.
+- Fixed Insights destination-row duplication by rebuilding each row inside a
+  dedicated widget; rows now show a count and percentage without stale labels
+  or overlap after refresh/maximize. History now supports app/date filters and
+  uses a compact copy icon for secondary actions.
+- Replaced the barely visible global opacity pulse with a visible native Qt
+  button sheen/outline and themed animated switches for push-to-talk and local
+  cleanup. The effects are paint-only and stay outside the audio path.
+- Expanded the native macOS menu into familiar File, Edit, Dictation,
+  Insights, View, Window, and Help sections while keeping the status-item menu
+  useful for background quick actions.
+- Rewrote `docs/index.html` around the product experience: hotkey, notch HUD,
+  local processing, optional cleanup, and guided model setup. The landing page
+  now has several download CTAs, so `update_release_page.py` updates every
+  tagged DMG link instead of requiring exactly one.
+
+### Current reliability and interaction pass
+- Fixed file transcription failures caused by requesting word timestamps from
+  models that only expose segment timestamps (or no timestamps). Chatter now
+  reads the loaded model capability, downgrades safely, and retries once with
+  the native automatic default if a provider reports status 12.
+- Transcribed Files now keeps model/backend selection in the background and
+  offers a compact Export menu: TXT for every result, plus SRT and WebVTT when
+  word- or segment-level timings are available.
+- Added Command+Backspace line clearing to the live practice editor without
+  changing ordinary word deletion or the behavior of other text fields.
+- Added an optional Tap-to-toggle persistent dictation mode. Hold-to-talk
+  remains the default and both modes use the same recorder and streaming ASR
+  pipeline, so the option does not add a second transcription model.
+- Consolidated the native Mac menu into app, file, edit, dictation,
+  permissions, view, window, and help sections; Edit actions target the
+  focused field, with Copy falling back to the latest transcript when no field
+  is focused.
+- Applied a consistent Avenir Next hierarchy, bordered themed menus, combobox
+  popups, and calendar tooltips. Insights destination percentages now use the
+  total named sessions and group smaller destinations as Other apps, avoiding
+  misleading bar lengths and duplicate-looking labels.
+- File exports now distinguish word-level from phrase-level subtitles. Token
+  timing is grouped into real word rows when a model exposes tokens; a
+  segment-only model keeps word-level export disabled instead of generating
+  inaccurate synthetic word timings.
+- Replaced the prototype tap-to-toggle activation with an opt-in double-tap
+  gesture. It starts and stops one persistent session while leaving the
+  default hold-to-talk path immediate and unchanged.
+- Added both Command+Backspace and Command+Delete handling to the Live
+  Dictation editor, including native Qt shortcuts as a fallback for macOS key
+  event variations.
+- Made hands-free behavior explicit in Settings and the HUD: double-tap the
+  selected hotkey to start, double-tap it again to stop, and releasing the
+  key alone does not end the persistent session. The persistent stop grace
+  period is shorter so the finish action feels immediate.
+- Added a visible Word level / Phrase level selector to Transcribed Files.
+  Word level is now the default and automatically prefers the bundled
+  Parakeet TDT model, which was verified locally to return real per-word
+  timings. Whisper remains available for phrase-level exports.
+- Hardened Command+Backspace/Delete by claiming the macOS ShortcutOverride
+  event before QTextEdit's own shortcut handling can consume it.
+- Added a local update checker that reads the installed bundle version,
+  compares it with the public GitHub latest release, shows the version in
+  Settings, and delivers a native macOS update notification once per release.
+- The compact menu-bar surface now shows local words/dictations for today,
+  links to Insights, and can be hidden or restored from Settings or its own
+  menu. Its QMenu styling uses Chatter's terracotta surface and orange accent
+  instead of a generic Qt menu treatment.
+- File history records the exact local model selected for each transcription
+  and whether the result actually contains word, phrase, or no timing. The
+  Files tab shows that provenance so a Whisper phrase-only result cannot be
+  mistaken for a word-level export.
+- The live practice editor also exposes Delete Current Line in Chatter's
+  native Edit menu, alongside direct Command+Backspace/Delete handling.

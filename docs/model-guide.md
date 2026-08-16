@@ -15,11 +15,13 @@ not need a catalog of models to start dictating.
 
 - **Live dictation:** [Nemotron 3.5 streaming GGUFs](https://huggingface.co/models?search=nemotron%203.5%20streaming%20gguf). Choose a Q8_0 file when memory allows.
 - **Optional cleanup:** [small instruct GGUFs](https://huggingface.co/models?pipeline_tag=text-generation&search=2b%20instruct%20gguf). Chatter uses this only for punctuation, corrections, and formatting.
-- **File transcription:** [Whisper large-v3 Turbo](https://huggingface.co/models?search=whisper%20large%20v3%20turbo%20gguf) or [Parakeet TDT](https://huggingface.co/models?search=parakeet%20tdt%20gguf).
+- **File transcription:** [Parakeet TDT](https://huggingface.co/models?search=parakeet%20tdt%20gguf) is the recommended choice when you want word-level subtitle timing. [Whisper large-v3 Turbo](https://huggingface.co/models?search=whisper%20large%20v3%20turbo%20gguf) remains a strong phrase-level option.
 
 ## 3. Import them in Chatter
 
-Open **Models** → choose the job → **Import .gguf file…**. Chatter checks
+Open **Models** → choose the job → **Import .gguf file…**. On the
+**Transcribed Files** tab, choose **Word level** or **Phrase level** before
+you transcribe. Chatter checks
 that a live model supports streaming before accepting it. Start with cleanup
 off, confirm the raw dictation feels fast, then enable **Clean up with local
 AI** in Settings.

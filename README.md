@@ -5,8 +5,9 @@ A small native macOS transcription app built on
 [this write-up](https://workshop.cjpais.com/projects/transcribe-cpp)) instead
 of whisper.cpp directly. Two ways to use it:
 
-- **File transcription** — open an audio/video file, pick a model, transcribe,
-  export `.txt` or `.srt`.
+- **File transcription** — open an audio/video file, let Chatter select the
+  configured local file model, transcribe, and export `.txt`, `.srt`, or
+  `.vtt` when the model provides timestamps.
 - **Push-to-talk** — hold your chosen key (default **Right Shift**, pick from
   the "Push-to-talk key" dropdown in the main window — Right/Left Shift,
   Option, Control, Command, or Caps Lock) anywhere on your Mac and speak.
@@ -14,6 +15,8 @@ of whisper.cpp directly. Two ways to use it:
   finalizes its own transcript on release, and inserts that result. There is
   no second ASR pass in the push-to-talk path. The optional local cleanup model
   is the only additional model used there.
+  Settings also offers an opt-in double-tap gesture for a hands-free session;
+  double-tap the same key again to finish. Hold-to-talk remains the default.
 
 The current push-to-talk model is
 `nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf`. The older Nemotron and Moonshine
@@ -48,12 +51,15 @@ see "Building from source" below.
 
 ## 3. Download models
 
-Use the short [model guide](docs/model-guide.md), or open **Models → How to
-choose** inside Chatter. Start with one live model:
+Use the short [model guide](docs/model-guide.md), or open **Advanced settings →
+How to choose** inside Chatter. Start with one live model:
 
 - **Live dictation:** Nemotron 3.5 streaming Q8_0.
 - **Optional cleanup:** a small 2B–4B instruct GGUF.
-- **File transcription:** Whisper large-v3 Turbo or Parakeet TDT.
+- **File transcription:** Whisper large-v3 Turbo or Parakeet TDT. Chatter
+  defaults to word-level timing with Parakeet TDT, while Whisper remains
+  available for phrase-level timing. File export always includes plain text
+  and offers the subtitle formats supported by the selected model.
 
 The guide recommends a setup by unified memory, explains what each model does,
 and links directly to download searches. Chatter rejects a live model that
@@ -181,9 +187,15 @@ Nemotron ASR path.
 
 ## Notes
 
-- SRT export only works for models that return segment timestamps (Whisper
-  family does; some Parakeet/Canary variants don't expose them yet — the
-  button is greyed out when that's the case).
+- Settings shows the installed Chatter version and can check the public GitHub
+  Releases page for a newer DMG. Automatic checks are local and optional; no
+  transcript, account, or device data is sent. If an update is found while
+  Chatter is running, macOS can show a native notification and the menu-bar
+  menu exposes the download link.
+- Phrase-level SRT/VTT works when the model returns segment timestamps. The
+  separate word-level export uses real word or token timings; Chatter never
+  invents word timings from a whole phrase. Existing phrase-only history
+  entries need to be transcribed again to create word timings.
 - transcribe.cpp serializes one run per model session; Chatter keeps one
   persistent session per flow (file transcription and push-to-talk each have
   their own), so within a flow only one transcription runs at a time.

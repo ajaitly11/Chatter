@@ -24,6 +24,7 @@ class InsightSummary:
     dictations: int
     average_words: int
     average_wpm: int | None
+    pace_sessions: int
     words_today: int
     sessions_today: int
     active_days: int
@@ -34,6 +35,7 @@ class InsightSummary:
     pasted_count: int
     average_processing_ms: int | None
     daily_words: tuple[tuple[date, int], ...]
+    daily_details: tuple[tuple[date, int, int, str | None], ...]
     contexts: tuple[tuple[str, int], ...]
 
 
@@ -103,18 +105,21 @@ def _context_counts(entries: Iterable[dict]) -> tuple[tuple[str, int], ...]:
     labels: dict[str, str] = {}
     for entry in entries:
         app = str(entry.get("context_app", "")).strip()
-        mode = str(entry.get("context_mode", "")).strip()
-        label = app or {
-            "email": "Professional email",
-            "notes": "Notes / journal",
-            "coding": "Coding / AI prompts",
-            "social": "Social / chat",
-            "browser": "Browser fields",
-        }.get(mode, "Unclassified")
+        # An absent foreground app is not an insight. Showing it as
+        # "Unclassified" makes the dashboard look broken and teaches the user
+        # nothing. Context modes still drive cleanup internally, but this
+        # visualization only claims knowledge we actually have: a named app.
+        if not app:
+            continue
+        label = app
         key = label.casefold()
         labels.setdefault(key, label)
         counts[key] += 1
-    return tuple((labels[key], count) for key, count in counts.most_common(5))
+    ranked = counts.most_common(5)
+    other_count = sum(count for _key, count in counts.most_common()[5:])
+    if other_count:
+        ranked.append(("Other apps", other_count))
+    return tuple((labels.get(key, key), count) for key, count in ranked)
 
 
 def summarize(
@@ -134,7 +139,7 @@ def summarize(
     all_entries = [entry for entry in entries if entry.get("kind", "dictation") == "dictation"]
     if days is None:
         filtered = all_entries
-        chart_days = 14
+        chart_days = 30
         dated = [_entry_date(entry) for entry in all_entries]
         dated = [item for item in dated if item is not None]
         chart_anchor = max([today, *dated]) if dated else today
@@ -148,9 +153,11 @@ def summarize(
         chart_anchor = today
 
     total_words = sum(_entry_words(entry) for entry in filtered)
-    total_seconds = sum(_entry_seconds(entry) for entry in filtered)
+    pace_entries = [entry for entry in filtered if _entry_seconds(entry) > 0]
+    total_seconds = sum(_entry_seconds(entry) for entry in pace_entries)
     word_count = len(filtered)
-    average_wpm = round(total_words / total_seconds * 60) if total_seconds > 0 else None
+    pace_words = sum(_entry_words(entry) for entry in pace_entries)
+    average_wpm = round(pace_words / total_seconds * 60) if total_seconds > 0 else None
     average_words = round(total_words / word_count) if word_count else 0
     words_today = sum(_entry_words(entry) for entry in filtered if _entry_date(entry) == today)
     sessions_today = sum(1 for entry in filtered if _entry_date(entry) == today)
@@ -167,15 +174,26 @@ def summarize(
     average_processing_ms = round(sum(processing_values) / len(processing_values)) if processing_values else None
 
     daily_words: list[tuple[date, int]] = []
+    daily_details: list[tuple[date, int, int, str | None]] = []
     for offset in range(chart_days - 1, -1, -1):
         day = chart_anchor - timedelta(days=offset)
-        daily_words.append((day, sum(_entry_words(entry) for entry in filtered if _entry_date(entry) == day)))
+        day_entries = [entry for entry in filtered if _entry_date(entry) == day]
+        words = sum(_entry_words(entry) for entry in day_entries)
+        app_counts = Counter(
+            str(entry.get("context_app", "")).strip()
+            for entry in day_entries
+            if str(entry.get("context_app", "")).strip()
+        )
+        top_app = app_counts.most_common(1)[0][0] if app_counts else None
+        daily_words.append((day, words))
+        daily_details.append((day, words, len(day_entries), top_app))
 
     return InsightSummary(
         total_words=total_words,
         dictations=word_count,
         average_words=average_words,
         average_wpm=average_wpm,
+        pace_sessions=len(pace_entries),
         words_today=words_today,
         sessions_today=sessions_today,
         active_days=len(active_days),
@@ -186,5 +204,6 @@ def summarize(
         pasted_count=pasted_count,
         average_processing_ms=average_processing_ms,
         daily_words=tuple(daily_words),
+        daily_details=tuple(daily_details),
         contexts=_context_counts(filtered),
     )

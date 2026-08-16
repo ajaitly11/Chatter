@@ -186,24 +186,67 @@ _NATIVE_COLLECTION_BEHAVIOR = (
     | AppKit.NSWindowCollectionBehaviorIgnoresCycle
 )
 
+# boring.notch's own reference level (github.com/TheBoredTeam/boring.notch)
+# — this is not a private number. Confirmed live via CGWindowListCopyWindowInfo
+# that the actual boringNotch app, installed and running on this Mac, sits its
+# own window at this exact layer. Two apps both targeting the same level race
+# on every orderFrontRegardless() call; whichever reasserts more recently
+# wins, so a persistent competing app doesn't just flicker over the HUD
+# occasionally — it can win every race indefinitely from the moment it starts
+# reasserting more often (e.g. right after the user switches apps a lot,
+# such as while using a screenshot tool). See _hud_window_level below.
+_BASE_HUD_LEVEL = AppKit.NSMainMenuWindowLevel + 3
+# Genuinely reserved system chrome (Dock, Spotlight, Control Center, screen
+# savers) lives at 1000+ (see the 'Claude' overlay's own screenshot-panel
+# window observed at 1000, and Control Center at a few levels above this).
+# Only contend with other ordinary elevated windows below that, matching the
+# existing reasoning for not reaching into system territory the WindowServer
+# won't extend FullScreenAuxiliary cross-Space treatment to.
+_MAX_CONTENDED_LEVEL = 200
+
+
+def _hud_window_level():
+    """The level to show the HUD at: one above whatever else is currently
+    claiming our base level (or higher, up to _MAX_CONTENDED_LEVEL), so a
+    persistent competing notch-style overlay (boringNotch or similar) can't
+    permanently win the front-ordering race. Re-scanned on every show() —
+    see the call site — so a competitor that starts after Chatter does still
+    gets cleared on the next hold-to-talk."""
+    try:
+        own_pid = AppKit.NSRunningApplication.currentApplication().processIdentifier()
+        windows = Quartz.CGWindowListCopyWindowInfo(
+            Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID
+        )
+        level = _BASE_HUD_LEVEL
+        for w in windows:
+            if w.get("kCGWindowOwnerPID") == own_pid:
+                continue
+            layer = w.get("kCGWindowLayer")
+            if layer is None:
+                continue
+            if _BASE_HUD_LEVEL <= layer < _MAX_CONTENDED_LEVEL and layer >= level:
+                level = layer + 1
+        return level
+    except Exception:
+        logger.exception("couldn't scan on-screen window layers for HUD level")
+        return _BASE_HUD_LEVEL
+
 
 def _make_overlay_appear_everywhere(widget):
     try:
         ns_view = objc.objc_object(c_void_p=int(widget.winId()))
         ns_window = ns_view.window()
 
-        # Mirror boring.notch's native window recipe. A Qt Tool widget is
-        # still backed by an NSPanel, but its default style mask is not the
-        # same as a non-activating HUD panel and can be kept behind a native
-        # fullscreen Space even when collectionBehavior is correct.
-        style_mask = ns_window.styleMask()
-        for style_name in (
-            "NSWindowStyleMaskBorderless",
-            "NSWindowStyleMaskNonactivatingPanel",
-            "NSWindowStyleMaskUtilityWindow",
-            "NSWindowStyleMaskHUDWindow",
-        ):
-            style_mask |= getattr(AppKit, style_name, 0)
+        # Mirror boring.notch's native window recipe. Use the small,
+        # intentional non-activating panel mask instead of preserving Qt's
+        # Tool/HUD bits. The latter can make WindowServer treat this as a
+        # regular application window after a screen recorder or fullscreen
+        # Space changes ownership of the active surface.
+        style_mask = (
+            getattr(AppKit, "NSWindowStyleMaskBorderless", 0)
+            | getattr(AppKit, "NSWindowStyleMaskNonactivatingPanel", 0)
+            | getattr(AppKit, "NSWindowStyleMaskUtilityWindow", 0)
+        )
         ns_window.setStyleMask_(style_mask)
         ns_window.setOpaque_(False)
         ns_window.setHasShadow_(False)
@@ -239,11 +282,13 @@ def _make_overlay_appear_everywhere(widget):
         # the HUD wasn't appearing over *other* apps' fullscreen Spaces at
         # all — levels that high are reserved system territory that the
         # WindowServer doesn't extend the FullScreenAuxiliary cross-Space
-        # treatment to the way it does for ordinary elevated levels).
-        ns_window.setLevel_(AppKit.NSMainMenuWindowLevel + 3)
+        # treatment to the way it does for ordinary elevated levels). Not a
+        # flat 27 though — see _hud_window_level: a real notch-style utility
+        # can and does sit at that exact shared level too.
+        ns_window.setLevel_(_hud_window_level())
         logger.info(
-            "native HUD panel configured: styleMask=%s level=%s collectionBehavior=%s hidesOnDeactivate=%s floating=%s",
-            ns_window.styleMask(),
+            "native HUD panel configured: windowNumber=%s styleMask=%s level=%s collectionBehavior=%s hidesOnDeactivate=%s floating=%s",
+            ns_window.windowNumber(), ns_window.styleMask(),
             ns_window.level(), ns_window.collectionBehavior(), ns_window.hidesOnDeactivate(),
             ns_window.isFloatingPanel(),
         )
@@ -262,6 +307,15 @@ def _order_overlay_front(widget):
     try:
         ns_view = objc.objc_object(c_void_p=int(widget.winId()))
         ns_window = ns_view.window()
+        # windowNumber/level logged at debug so a drift between what
+        # _make_overlay_appear_everywhere last configured and what's
+        # actually being ordered here (e.g. after Qt silently swaps in a
+        # fresh native window) is visible in the log without spamming info
+        # level on every 280ms reassert tick.
+        logger.debug(
+            "ordering HUD front: windowNumber=%s level=%s floating=%s",
+            ns_window.windowNumber(), ns_window.level(), ns_window.isFloatingPanel(),
+        )
         ns_window.orderFrontRegardless()
     except Exception:
         logger.exception("couldn't order HUD panel above the active Space")
@@ -356,6 +410,16 @@ class Overlay(QWidget):
         self._hide_timer = QTimer(self)
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._fade_out)
+
+        # App activation, screen recording, and fullscreen transitions can
+        # leave a deactivated auxiliary panel behind the newly frontmost
+        # surface even though its collection behavior is still correct.
+        # While the HUD is visible, quietly re-order only the native panel;
+        # this does not steal focus and avoids rebuilding/animating the Qt
+        # widget on every tick.
+        self._front_reassert_timer = QTimer(self)
+        self._front_reassert_timer.setInterval(280)
+        self._front_reassert_timer.timeout.connect(self._reassert_front)
 
         # Only used to reposition an already-visible pill if the target
         # screen changes mid-session (rare) — not for show/hide anymore.
@@ -488,6 +552,7 @@ class Overlay(QWidget):
     def dismiss(self):
         """Hide immediately and forget the previous display target."""
         self._hide_timer.stop()
+        self._front_reassert_timer.stop()
         self._fade_anim.stop()
         self.hide()
         self._hiding = False
@@ -498,6 +563,23 @@ class Overlay(QWidget):
         self._move_anim.setStartValue(self.pos())
         self._move_anim.setEndValue(QPoint(x, y))
         self._move_anim.start()
+
+    def _reassert_front(self):
+        if self.isVisible() and not self._hiding:
+            # Reconfigure, not just reorder: Qt can silently swap in a new
+            # native backing window mid-session (display/Space
+            # reconfiguration, a screen-recording tool changing the screen
+            # graph, another app's fullscreen transition) that reverts to
+            # Qt's default level/collectionBehavior. Only calling
+            # _order_overlay_front here would keep re-ordering that
+            # wrong-configured window without ever fixing its level, so the
+            # HUD would silently lose its above-everything treatment until
+            # the next full hide/show cycle. Both calls are cheap AppKit
+            # property sets — no Qt widget rebuild/animation — so doing this
+            # every 280ms is not the "rebuilding/animating" this timer was
+            # originally designed to avoid.
+            _make_overlay_appear_everywhere(self)
+            _order_overlay_front(self)
 
     # public API -----------------------------------------------------------
 
@@ -541,12 +623,19 @@ class Overlay(QWidget):
             # can hand the widget a new native backing window across
             # hide/show cycles, silently reverting the elevated level set
             # earlier — which would leave the HUD at a normal window level,
-            # visible only when nothing else is in front of it. Done BEFORE
-            # show() (not after) so the window is never briefly ordered onto
-            # screen with default (non-cross-Space) properties first.
+            # visible only when nothing else is in front of it. Called BEFORE
+            # show() so the window is never briefly ordered onto screen with
+            # default (non-cross-Space) properties first, AND again
+            # immediately AFTER show() in case show() itself is what swaps in
+            # the new native window (the before-call would then have
+            # configured a window that's already been discarded, leaving the
+            # real one at Qt's defaults). The second call is effectively free
+            # since it runs before _order_overlay_front, not on a timer.
             _make_overlay_appear_everywhere(self)
             self.show()
+            _make_overlay_appear_everywhere(self)
             _order_overlay_front(self)
+            self._front_reassert_timer.start()
             target_height = self._physical_notch_height + HEIGHT if notch_mode else HEIGHT
             logger.info("HUD shown: resting at (%d, %d) target size %dx%d notch_mode=%s", rx, ry, width, target_height, notch_mode)
             self._fade_anim.stop()
@@ -561,8 +650,13 @@ class Overlay(QWidget):
                 )
                 self._expand_anim.start()
         else:
-            # Already up (e.g. listening -> processing mid-hold) — only
-            # worth animating if the target screen actually changed.
+            # Already up (e.g. listening -> processing mid-hold). A screen
+            # recorder or app/fullscreen transition may have put the panel
+            # behind the current Space without hiding the Qt widget, so
+            # refresh the native presentation before moving it.
+            _make_overlay_appear_everywhere(self)
+            _order_overlay_front(self)
+            self._front_reassert_timer.start()
             self._animate_to(rx, ry)
         self._set_label_text(text)
 
@@ -582,6 +676,7 @@ class Overlay(QWidget):
 
     def _finish_hide(self):
         if self._hiding:
+            self._front_reassert_timer.stop()
             self.hide()
             self._hiding = False
             self._screen_geometry = None

@@ -1,14 +1,17 @@
 import logging
 import sys
 import threading
+import webbrowser
 from pathlib import Path
 
 from PyQt6.QtCore import QLockFile, QRectF, Qt, QTimer
-from PyQt6.QtGui import QAction, QActionGroup, QColor, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import QApplication, QSystemTrayIcon, QMenu
+from PyQt6.QtGui import QAction, QActionGroup, QColor, QIcon, QKeySequence, QPainter, QPixmap
+from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 import sounddevice as sd
 
 from . import config
+from . import history
+from . import insights
 from . import permissions
 from . import theme
 from .correction_watcher import CorrectionWatcher
@@ -16,10 +19,17 @@ from .formatter import Formatter
 from .hotkey import PushToTalkController
 from .logging_setup import configure as configure_logging
 from .main_window import MainWindow
+from .native_hotkey import (
+    ACTIVATION_MODE_OPTIONS,
+    HOLD_TO_TALK,
+    normalize_activation_mode,
+)
 from .icon_art import draw_character
 from .onboarding import OnboardingWindow
 from .overlay import Overlay
+from .tray_popover import TrayPopover
 from .transcription_service import MODELS_DIR, service, streaming_service
+from .update_checker import UpdateChecker
 
 _STREAMING_MODEL_CANDIDATES = [
     MODELS_DIR / "nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf",
@@ -112,6 +122,9 @@ def run():
 
     formatter = Formatter()
     window = MainWindow(formatter)
+    update_checker = UpdateChecker(window)
+    app.setApplicationVersion(update_checker.current_version)
+    window.set_installed_version(update_checker.current_version)
     overlay = Overlay()
     # Keep the notch as the stable MacBook anchor, but mirror the HUD on the
     # display containing the active app so it remains visible while the user
@@ -220,7 +233,16 @@ def run():
 
     hotkey.partial_changed.connect(on_partial)
 
+    # Keep the most recent committed dictation available to the native Edit
+    # menu without changing the window or the transcript storage model. The
+    # history fallback also covers results recorded before this process began.
+    last_transcript = {"value": ""}
+    recent_history = history.load(kind="dictation", limit=1)
+    if recent_history:
+        last_transcript["value"] = str(recent_history[0].get("text", ""))
+
     def on_result(text: str, pasted: bool):
+        last_transcript["value"] = text or ""
         flash_hud("done", phrase="Done!")
         window.set_live_state("done", label="Done!")
         window._reload_dictation_history()
@@ -239,15 +261,60 @@ def run():
     hotkey.error.connect(lambda msg: window.set_live_state("error", label=_truncate(msg, 60)))
     hotkey.error.connect(lambda msg: logger.warning("push-to-talk error: %s", msg))
 
-    tray = QSystemTrayIcon(_make_tray_icon())
+    tray_icon = _make_tray_icon()
+    tray = QSystemTrayIcon(tray_icon)
     tray.setToolTip("Chatter")
     menu = QMenu()
+    menu.setObjectName("chatterTrayMenu")
+    # QSystemTrayIcon uses a native menu on macOS. Keep an explicit palette
+    # here as well as the app-wide QSS so the compact insights surface uses
+    # Chatter's terracotta/orange language wherever Qt allows styling it.
+    menu.setStyleSheet(
+        f"""
+        QMenu#chatterTrayMenu {{
+            background-color: {theme.SURFACE};
+            color: {theme.TEXT};
+            border: 1px solid {theme.BORDER};
+            border-radius: 10px;
+            padding: 7px;
+            font-family: \"Avenir Next\";
+            font-size: 13px;
+        }}
+        QMenu#chatterTrayMenu::item {{
+            background-color: transparent;
+            border-radius: 6px;
+            padding: 8px 30px 8px 11px;
+        }}
+        QMenu#chatterTrayMenu::item:selected {{
+            background-color: {theme.SURFACE2};
+            color: {theme.TEXT};
+        }}
+        QMenu#chatterTrayMenu::item:disabled {{
+            color: {theme.TEXT_DIM};
+        }}
+        QMenu#chatterTrayMenu::separator {{
+            background-color: {theme.BORDER};
+            height: 1px;
+            margin: 6px 7px;
+        }}
+        """
+    )
+
+    snapshot_words_action = QAction("Today · 0 words", menu)
+    snapshot_words_action.setEnabled(False)
+    snapshot_sessions_action = QAction("0 dictations · stored locally", menu)
+    snapshot_sessions_action.setEnabled(False)
+    menu.addAction(snapshot_words_action)
+    menu.addAction(snapshot_sessions_action)
+    menu.addSeparator()
 
     open_action = QAction("Open Chatter")
     open_action.triggered.connect(lambda: (window.show(), window.raise_(), window.activateWindow()))
     menu.addAction(open_action)
 
-    settings_action = QAction("Open Settings")
+    settings_action = QAction("Settings…")
+    settings_action.setShortcut("Ctrl+,")
+    settings_action.setMenuRole(QAction.MenuRole.PreferencesRole)
 
     def open_settings():
         window.show()
@@ -256,7 +323,6 @@ def run():
         window.activateWindow()
 
     settings_action.triggered.connect(open_settings)
-    menu.addAction(settings_action)
 
     def open_insights():
         window.show()
@@ -264,9 +330,10 @@ def run():
         window.raise_()
         window.activateWindow()
 
-    insights_action = QAction("Open Insights")
+    insights_action = QAction("See more insights")
     insights_action.triggered.connect(open_insights)
     menu.addAction(insights_action)
+    menu.addAction(settings_action)
 
     def refresh_permissions():
         """Refresh TCC state and start the listener when setup is complete."""
@@ -303,17 +370,33 @@ def run():
 
     finish_setup_action = QAction("Finish setup…")
     finish_setup_action.triggered.connect(run_onboarding)
-    menu.addAction(finish_setup_action)
-
-    menu.addSeparator()
 
     permission_status_action = QAction()
     permission_status_action.setEnabled(False)
-    menu.addAction(permission_status_action)
 
     check_permissions_action = QAction("Refresh permissions")
     check_permissions_action.triggered.connect(refresh_permissions)
-    menu.addAction(check_permissions_action)
+
+    # QSystemTrayIcon's context menu is an NSMenu on macOS. That native menu
+    # deliberately ignores the app stylesheet, so the status item uses a
+    # themed Qt popover instead. Keep this indirection because the refresh
+    # callbacks are defined before the popover itself is constructed.
+    tray_popover_ref = {"value": None}
+
+    def set_menu_bar_icon(visible: bool):
+        config.update(menu_bar_icon_enabled=visible)
+        tray.setVisible(visible)
+        window.menu_bar_icon_checkbox.blockSignals(True)
+        window.menu_bar_icon_checkbox.setChecked(visible)
+        window.menu_bar_icon_checkbox.blockSignals(False)
+        popover = tray_popover_ref.get("value")
+        if popover is not None:
+            popover.set_menu_bar_checked(visible)
+
+    menu_bar_icon_action = QAction("Show Chatter in menu bar", menu)
+    menu_bar_icon_action.setCheckable(True)
+    menu_bar_icon_action.toggled.connect(set_menu_bar_icon)
+    window.menu_bar_icon_visibility_changed.connect(set_menu_bar_icon)
 
     ptt_action = QAction("Push-to-talk enabled")
     ptt_action.setCheckable(True)
@@ -322,13 +405,43 @@ def run():
 
     def toggle_ptt(checked):
         config.update(push_to_talk_enabled=checked)
+        window.ptt_enabled_checkbox.blockSignals(True)
+        window.ptt_enabled_checkbox.setChecked(checked)
+        window.ptt_enabled_checkbox.blockSignals(False)
         if checked and permissions_ready():
             hotkey.start()
         else:
             hotkey.stop()
 
     ptt_action.toggled.connect(toggle_ptt)
-    menu.addAction(ptt_action)
+
+    dictation_menu = QMenu("Dictation", menu)
+    dictation_menu.addAction(ptt_action)
+
+    activation_menu = QMenu("Activation", dictation_menu)
+    activation_group = QActionGroup(activation_menu)
+    activation_group.setExclusive(True)
+    activation_actions = []
+    for mode, label in ACTIVATION_MODE_OPTIONS:
+        action = QAction(label, activation_menu)
+        action.setCheckable(True)
+        action.setData(mode)
+
+        def select_activation(_checked, activation_mode=mode):
+            config.update(hotkey_activation_mode=activation_mode)
+            window._update_live_hotkey_pill()
+            window._update_activation_note()
+            index = window.activation_combo.findData(activation_mode)
+            if index >= 0:
+                window.activation_combo.blockSignals(True)
+                window.activation_combo.setCurrentIndex(index)
+                window.activation_combo.blockSignals(False)
+
+        action.triggered.connect(select_activation)
+        activation_group.addAction(action)
+        activation_menu.addAction(action)
+        activation_actions.append(action)
+    dictation_menu.addMenu(activation_menu)
 
     cleanup_action = QAction("Clean up with local AI")
     cleanup_action.setCheckable(True)
@@ -341,9 +454,11 @@ def run():
         window._on_formatting_toggled(checked)
 
     cleanup_action.toggled.connect(toggle_cleanup)
-    menu.addAction(cleanup_action)
 
-    context_menu = QMenu("Writing context", menu)
+    writing_menu = QMenu("Writing", menu)
+    writing_menu.addAction(cleanup_action)
+
+    context_menu = QMenu("Writing context", writing_menu)
     context_group = QActionGroup(context_menu)
     context_group.setExclusive(True)
     context_options = [
@@ -372,9 +487,9 @@ def run():
         context_group.addAction(action)
         context_menu.addAction(action)
         context_actions.append(action)
-    menu.addMenu(context_menu)
+    writing_menu.addMenu(context_menu)
 
-    microphone_menu = QMenu("Microphone", menu)
+    microphone_menu = QMenu("Microphone", dictation_menu)
     microphone_group = QActionGroup(microphone_menu)
     microphone_group.setExclusive(True)
     microphone_actions = []
@@ -406,19 +521,47 @@ def run():
         microphone_group.addAction(action)
         microphone_menu.addAction(action)
         microphone_actions.append(action)
-    menu.addMenu(microphone_menu)
+    dictation_menu.addMenu(microphone_menu)
+
+    # The status-item menu is intentionally a concise glance surface. The
+    # complete Dictation/Writing/Permissions menus remain in the native app
+    # menu, so the two Mac menu locations no longer duplicate one another.
+    latest_update_url = {"value": ""}
+    update_action = QAction("Download update…", menu)
+    update_action.setVisible(False)
+    update_action.triggered.connect(
+        lambda: webbrowser.open(latest_update_url["value"] or "https://github.com/ajaitly11/Chatter/releases/latest")
+    )
+    menu.addAction(update_action)
+    menu.addSeparator()
+    menu.addAction(menu_bar_icon_action)
 
     def refresh_menu_state():
         cfg_now = config.load()
         mic = "ready" if permissions.is_microphone_authorized() else "needs permission"
         input_state = "ready" if permissions.input_monitoring_available() else "needs permission"
         access = "ready" if permissions.is_trusted() else "needs permission"
+        summary = insights.summarize(history.load(kind="dictation"), days=1)
+        snapshot_words_action.setText(f"Today · {summary.words_today:,} words")
+        snapshot_sessions_action.setText(
+            f"{summary.sessions_today} dictation{'s' if summary.sessions_today != 1 else ''} · stored locally"
+        )
         permission_status_action.setText(
-            f"Permissions: mic {mic} · hotkey {input_state} · paste {access}"
+            f"Microphone {mic} · Input Monitoring {input_state} · Accessibility {access}"
         )
         ptt_action.blockSignals(True)
         ptt_action.setChecked(cfg_now.get("push_to_talk_enabled", True))
         ptt_action.blockSignals(False)
+        activation_mode = normalize_activation_mode(
+            cfg_now.get("hotkey_activation_mode", HOLD_TO_TALK)
+        )
+        for action in activation_actions:
+            action.blockSignals(True)
+            action.setChecked(action.data() == activation_mode)
+            action.blockSignals(False)
+        window.ptt_enabled_checkbox.blockSignals(True)
+        window.ptt_enabled_checkbox.setChecked(cfg_now.get("push_to_talk_enabled", True))
+        window.ptt_enabled_checkbox.blockSignals(False)
         cleanup_action.blockSignals(True)
         cleanup_action.setChecked(cfg_now.get("formatting_enabled", True))
         cleanup_action.blockSignals(False)
@@ -432,9 +575,57 @@ def run():
             action.blockSignals(True)
             action.setChecked(action.data() == current_device)
             action.blockSignals(False)
+        menu_bar_icon_action.blockSignals(True)
+        menu_bar_icon_action.setChecked(cfg_now.get("menu_bar_icon_enabled", True))
+        menu_bar_icon_action.blockSignals(False)
+        popover = tray_popover_ref.get("value")
+        if popover is not None:
+            popover.update_snapshot(summary.words_today, summary.sessions_today)
+            popover.set_menu_bar_checked(cfg_now.get("menu_bar_icon_enabled", True))
 
     menu.aboutToShow.connect(refresh_menu_state)
     refresh_menu_state()
+
+    def notify_update(version: str, release_url: str, dmg_url: str):
+        latest_update_url["value"] = dmg_url or release_url
+        update_action.setText(f"Download Chatter {version}…")
+        update_action.setVisible(True)
+        popover = tray_popover_ref.get("value")
+        if popover is not None:
+            popover.set_update_available(version)
+        window.set_update_status(f"Chatter {version} is ready. Download it from the release page.")
+        if config.load().get("notified_update_version", "") == version:
+            return
+        config.update(notified_update_version=version)
+        try:
+            from Foundation import NSUserNotification, NSUserNotificationCenter
+
+            notification = NSUserNotification.alloc().init()
+            notification.setTitle_("Chatter update available")
+            notification.setInformativeText_(
+                f"Chatter {version} is ready. Open Chatter or its menu-bar icon to download it."
+            )
+            notification.setSoundName_("NSUserNotificationDefaultSoundName")
+            NSUserNotificationCenter.defaultUserNotificationCenter().deliverNotification_(notification)
+        except Exception:
+            logger.exception("couldn't deliver update notification")
+
+    def update_is_current(version: str):
+        window.set_update_status(f"You’re up to date · Chatter {version}")
+
+    def update_check_failed(message: str):
+        logger.info("update check unavailable: %s", message)
+        window.set_update_status("Update check unavailable right now. Try again later.", error=True)
+
+    update_checker.available.connect(notify_update)
+    update_checker.current.connect(update_is_current)
+    update_checker.failed.connect(update_check_failed)
+    window.update_check_requested.connect(update_checker.check)
+    update_timer = QTimer(window)
+    update_timer.setInterval(6 * 60 * 60 * 1000)
+    update_timer.timeout.connect(update_checker.check)
+    update_timer.start()
+    QTimer.singleShot(2500, update_checker.check)
 
     menu.addSeparator()
     quit_action = QAction("Quit Chatter")
@@ -447,35 +638,156 @@ def run():
         app.quit()
 
     quit_action.triggered.connect(do_quit)
+    menu.addSeparator()
     menu.addAction(quit_action)
 
-    # Keep the same commands available in the native macOS application menu.
-    # The status-item menu is useful when Chatter is in the background, but a
-    # user should not have to discover a tiny icon before they can finish
-    # setup or open Settings.
+    tray_popover = TrayPopover(
+        tray_icon,
+        on_open=lambda: open_action.trigger(),
+        on_insights=lambda: insights_action.trigger(),
+        on_settings=lambda: settings_action.trigger(),
+        on_update=lambda: webbrowser.open(
+            latest_update_url["value"] or "https://github.com/ajaitly11/Chatter/releases/latest"
+        ),
+        on_toggle_menu_bar=set_menu_bar_icon,
+        on_quit=do_quit,
+    )
+    tray_popover_ref["value"] = tray_popover
+
+    def show_tray_popover(_reason):
+        refresh_menu_state()
+        tray_popover.show_at_cursor()
+
+    tray.activated.connect(show_tray_popover)
+    # Populate the first snapshot after the popover exists. The earlier call
+    # keeps all native action state ready for the first menu-bar click.
+    refresh_menu_state()
+
+    # Expose the important commands in the native macOS application menu too.
+    # The status-item menu remains the compact background control surface;
+    # native menus keep one non-duplicated home for each app command family:
+    # File, Edit, Dictation, Permissions, View, Window, Help.
     native_menu = window.menuBar()
     native_menu.setNativeMenuBar(True)
     chatter_menu = native_menu.addMenu("Chatter")
-    chatter_menu.addAction(open_action)
-    chatter_menu.addAction(insights_action)
+    # Keep the application menu focused on app-level commands. Window and
+    # destination navigation live in their standard native menus below; the
+    # same actions appearing in several native menus made the menu bar noisy
+    # and, on macOS, could produce duplicate Preferences/Open entries.
     chatter_menu.addAction(settings_action)
-    chatter_menu.addAction(finish_setup_action)
-    chatter_menu.addSeparator()
-    chatter_menu.addAction(permission_status_action)
-    chatter_menu.addAction(check_permissions_action)
-    chatter_menu.addAction(ptt_action)
-    chatter_menu.addAction(cleanup_action)
     chatter_menu.addSeparator()
     chatter_menu.addAction(quit_action)
     chatter_menu.aboutToShow.connect(refresh_menu_state)
 
-    tray.setContextMenu(menu)
+    file_menu = native_menu.addMenu("File")
+    open_media_action = QAction("Open audio or video…", window)
+
+    def open_media():
+        window.show()
+        window.tabs.setCurrentIndex(1)
+        window.raise_()
+        window.activateWindow()
+        window.open_file()
+
+    open_media_action.triggered.connect(open_media)
+    file_menu.addAction(open_media_action)
+
+    edit_menu = native_menu.addMenu("Edit")
+
+    def focused_edit_call(method):
+        widget = app.focusWidget()
+        callback = getattr(widget, method, None) if widget is not None else None
+        if callable(callback):
+            callback()
+            return
+
+        # A saved transcript is immutable, so Copy is the only Edit command
+        # with a safe no-focus fallback. Do not silently map Cut, Paste, Undo,
+        # Redo, or Select All onto history and risk changing the wrong target.
+        if method == "copy" and last_transcript["value"].strip():
+            app.clipboard().setText(last_transcript["value"])
+
+    for title, method, shortcut in (
+        ("Undo", "undo", QKeySequence.StandardKey.Undo),
+        ("Redo", "redo", QKeySequence.StandardKey.Redo),
+        ("Cut", "cut", QKeySequence.StandardKey.Cut),
+        ("Copy", "copy", QKeySequence.StandardKey.Copy),
+        ("Paste", "paste", QKeySequence.StandardKey.Paste),
+        ("Select All", "selectAll", QKeySequence.StandardKey.SelectAll),
+    ):
+        action = QAction(title, window)
+        action.setShortcut(QKeySequence(shortcut))
+        action.triggered.connect(lambda _checked=False, name=method: focused_edit_call(name))
+        edit_menu.addAction(action)
+
+    clear_line_action = QAction("Delete Current Line", window)
+    # PyQt6 swaps Ctrl/Meta on macOS by default, so the "Ctrl+" spelling is
+    # what actually displays and matches the physical Command key here — see
+    # LiveDictationTextEdit._is_line_clear_event for the same discovery.
+    clear_line_action.setShortcuts([
+        QKeySequence("Ctrl+Backspace"),
+        QKeySequence("Ctrl+Del"),
+    ])
+    clear_line_action.triggered.connect(
+        lambda _checked=False: focused_edit_call("clear_current_line")
+    )
+    edit_menu.addSeparator()
+    edit_menu.addAction(clear_line_action)
+
+    native_dictation_menu = native_menu.addMenu("Dictation")
+    native_dictation_menu.addAction(ptt_action)
+    native_dictation_menu.addAction(activation_menu.menuAction())
+    native_dictation_menu.addAction(microphone_menu.menuAction())
+
+    native_permissions_menu = native_menu.addMenu("Permissions")
+    native_permissions_menu.addAction(finish_setup_action)
+    native_permissions_menu.addSeparator()
+    native_permissions_menu.addAction(permission_status_action)
+    native_permissions_menu.addAction(check_permissions_action)
+
+    view_menu = native_menu.addMenu("View")
+    view_actions = []
+    for index, label in enumerate(("Live Dictation", "Transcribed Files", "Dictionary", "History", "Insights")):
+        view_action = QAction(label, window)
+        view_action.setCheckable(True)
+        view_action.triggered.connect(lambda _checked=False, tab_index=index: window.tabs.setCurrentIndex(tab_index))
+        view_menu.addAction(view_action)
+        view_actions.append(view_action)
+    view_menu.addSeparator()
+    refresh_insights_action = QAction("Refresh insights", window)
+    refresh_insights_action.triggered.connect(window._reload_insights)
+    view_menu.addAction(refresh_insights_action)
+
+    def refresh_view_menu():
+        current_index = window.tabs.currentIndex()
+        for index, action in enumerate(view_actions):
+            action.blockSignals(True)
+            action.setChecked(index == current_index)
+            action.blockSignals(False)
+
+    view_menu.aboutToShow.connect(refresh_view_menu)
+    window.tabs.currentChanged.connect(lambda _index: refresh_view_menu())
+
+    window_menu = native_menu.addMenu("Window")
+    minimize_action = QAction("Minimize", window)
+    minimize_action.setShortcut(QKeySequence("Meta+M"))
+    minimize_action.triggered.connect(window.showMinimized)
+    window_menu.addAction(minimize_action)
+
+    help_menu = native_menu.addMenu("Help")
+    model_guide_action = QAction("Model guide…", window)
+    model_guide_action.triggered.connect(window._open_advanced_settings)
+    help_menu.addAction(model_guide_action)
+    about_action = QAction("About Chatter", window)
+    about_action.triggered.connect(lambda: QMessageBox.about(window, "About Chatter", "Local voice, with a little character."))
+    help_menu.addAction(about_action)
+
     logger.info(
         "menu bar status item: available=%s",
         QSystemTrayIcon.isSystemTrayAvailable(),
     )
     tray.show()
-    tray.setVisible(True)
+    tray.setVisible(config.load().get("menu_bar_icon_enabled", True))
 
     # Accessibility trust is tied to *this* launching bundle's identity
     # (Chatter.app vs. a bare `python main.py` run from Terminal each get

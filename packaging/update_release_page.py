@@ -31,9 +31,13 @@ def main() -> None:
         html,
     )
 
-    if download_count != 1 or note_count != 1:
+    # The landing page may expose the same download in several intentional
+    # places (navigation, hero, and final CTA). Keep every one of those links
+    # on the tagged release instead of forcing the design to have a single
+    # button just to satisfy the release automation.
+    if download_count < 1 or note_count != 1:
         raise SystemExit(
-            "expected exactly one download link and one version note in docs/index.html "
+            "expected at least one download link and exactly one version note in docs/index.html "
             f"(found {download_count} and {note_count})"
         )
 
