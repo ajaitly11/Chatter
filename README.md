@@ -1,235 +1,174 @@
 # Chatter
 
-A small native macOS transcription app built on
-[transcribe.cpp](https://github.com/handy-computer/transcribe.cpp) (see also
-[this write-up](https://workshop.cjpais.com/projects/transcribe-cpp)) instead
-of whisper.cpp directly. Two ways to use it:
+Speak to your Mac without leaving the keyboard.
 
-- **File transcription** — open an audio/video file, let Chatter select the
-  configured local file model, transcribe, and export `.txt`, `.srt`, or
-  `.vtt` when the model provides timestamps.
-- **Push-to-talk** — hold your chosen key (default **Right Shift**, pick from
-  the "Push-to-talk key" dropdown in the main window — Right/Left Shift,
-  Option, Control, Command, or Caps Lock) anywhere on your Mac and speak.
-  One streaming-capable local ASR model transcribes the audio while you speak,
-  finalizes its own transcript on release, and inserts that result. There is
-  no second ASR pass in the push-to-talk path. The optional local cleanup model
-  is the only additional model used there.
-  Settings also offers an opt-in double-tap gesture for a hands-free session;
-  double-tap the same key again to finish. Hold-to-talk remains the default.
+[![Latest release](https://img.shields.io/github/v/release/ajaitly11/Chatter?display_name=tag&label=latest%20release&color=F1843B)](https://github.com/ajaitly11/Chatter/releases/latest)
+[![Package Chatter](https://github.com/ajaitly11/Chatter/actions/workflows/release.yml/badge.svg)](https://github.com/ajaitly11/Chatter/actions/workflows/release.yml)
+[![Website](https://img.shields.io/badge/website-Chatter-211612?labelColor=211612&color=F1843B)](https://ajaitly11.github.io/Chatter/)
 
-The current push-to-talk model is
-`nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf`. The older Nemotron and Moonshine
-files remain available as fallbacks. File transcription still has a separate
-batch-model slot because it is a different workflow.
+![The Chatter pipeline: hold a key, see live words, optionally clean them up locally, and paste them into the focused app.](docs/readme-flow.svg)
 
-An optional local-LLM pass (any Gemma/Llama-family GGUF model served by
-`llama-server`) cleans up filler words, punctuation, grammar, repeated words,
-and verbal self-corrections before pasting. It runs entirely on the Mac.
+Chatter is a local macOS dictation app for people who think faster than they
+type. Hold a key, talk, and release. Your words appear in the app that already
+has focus. A small notch HUD shows what is happening, so you do not have to
+switch away from the thing you are writing.
 
-## 1. Install ffmpeg
+The important part is the speech path: one streaming ASR model handles live
+dictation from the first syllable to the final raw transcript. Optional local
+AI cleanup sits beside that path. It can improve punctuation and formatting,
+but it never replaces the speech model or has to be enabled for Chatter to
+work.
 
-Needed to decode mp3/mp4/mov/whatever into the raw PCM transcribe.cpp expects
-(only used for file transcription — the push-to-talk path records mic audio
-directly in the right format).
+## What Chatter can do
+
+- Live push-to-talk dictation with a notch HUD and live preview.
+- Hands-free dictation by double-tapping the selected hotkey to start and stop.
+- Audio and video file transcription with plain text, SRT, and VTT export.
+- Word-level subtitle timing when the selected file model provides word
+  timestamps; phrase-level timing remains available for models such as Whisper.
+- Optional local cleanup for punctuation, filler words, self-corrections, and
+  simple lists.
+- A personal dictionary, local history, and private usage insights.
+- Input-device selection, automatic foreground-app writing context, and a
+  menu-bar companion.
+
+## Download and try it
+
+Chatter currently ships as an Apple Silicon macOS app.
+
+1. Download the [latest DMG](https://github.com/ajaitly11/Chatter/releases/latest).
+2. Drag `Chatter.app` to `Applications` and open it.
+3. Give **Chatter** permission in macOS when asked. The app needs:
+   - **Microphone** to hear your voice.
+   - **Input Monitoring** to notice the global hotkey.
+   - **Accessibility** to paste the finished text into the focused app.
+
+These permissions belong to Chatter. You do not need to change the settings
+for unrelated apps. Audio, transcripts, models, dictionary entries, and
+cleanup prompts stay on this Mac.
+
+Once setup is complete, choose a microphone in **Settings**, pick a hotkey,
+and hold it anywhere on your Mac. The default is **Right Shift**. If you turn
+on hands-free mode, double-tap the same key to start listening and double-tap
+it again to stop.
+
+## Choose models without guessing
+
+You only need one model to start live dictation. Use the
+[model guide](docs/model-guide.md) if you are not sure what your Mac can
+handle.
+
+| Job | Starting point | What it does |
+| --- | --- | --- |
+| Live dictation | Nemotron 3.5 streaming, Q8_0 | Produces the live preview and raw transcript. |
+| Optional cleanup | A small 2B-4B instruct GGUF | Adds punctuation and repairs formatting after or alongside dictation. |
+| File transcription | Parakeet TDT or Whisper large-v3 Turbo | Transcribes longer audio and video files. Parakeet is the better starting point for word-level timing. |
+
+Start with cleanup off. If the raw transcript feels fast and reliable, enable
+**Clean up with local AI** in Settings. Cleanup is deliberately optional so a
+larger language model cannot hold up the live speech path.
+
+## Run from source
+
+### Requirements
+
+- Apple Silicon Mac running a recent macOS release.
+- Python 3.11 or newer.
+- `ffmpeg` for audio and video file transcription.
+- Local model files imported through Chatter's Models view.
+
+Install `ffmpeg` with Homebrew:
 
 ```bash
 brew install ffmpeg
 ```
 
-## 2. Set up Python and install dependencies
+Create a virtual environment and install the Python dependencies:
 
 ```bash
 python3 -m venv venv
 source venv/bin/activate
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-`transcribe-cpp` ships prebuilt native wheels for macOS (Apple Silicon), so
-`pip install` should just work. If it doesn't find a wheel for your platform,
-see "Building from source" below.
-
-## 3. Download models
-
-Use the short [model guide](docs/model-guide.md), or open **Advanced settings →
-How to choose** inside Chatter. Start with one live model:
-
-- **Live dictation:** Nemotron 3.5 streaming Q8_0.
-- **Optional cleanup:** a small 2B–4B instruct GGUF.
-- **File transcription:** Whisper large-v3 Turbo or Parakeet TDT. Chatter
-  defaults to word-level timing with Parakeet TDT, while Whisper remains
-  available for phrase-level timing. File export always includes plain text
-  and offers the subtitle formats supported by the selected model.
-
-The guide recommends a setup by unified memory, explains what each model does,
-and links directly to download searches. Chatter rejects a live model that
-does not support streaming.
-
-## 4. Run it
+Run the development app:
 
 ```bash
 python main.py
 ```
 
-Or build a double-clickable app once your venv/models are set up:
+To build the macOS application bundle:
 
 ```bash
 ./packaging/build_app.sh
 open Chatter.app
 ```
 
-`Chatter.app` is a frozen arm64 bundle with a real `Chatter` executable. The
-large GGUF model directory stays outside the bundle and is linked into the
-app at build time, so rebuilding does not duplicate the models. Rebuild it
-any time with `./packaging/build_app.sh`.
-
-To make it appear in Launchpad and the Applications folder, copy the generated
-app once:
+The build keeps large GGUF files outside the bundle. If a local `models`
+folder exists, the bundle links to it; otherwise Chatter guides you to import
+models after launch. To put the result in Launchpad and Applications:
 
 ```bash
 ditto Chatter.app /Applications/Chatter.app
 open -a /Applications/Chatter.app
 ```
 
-## Push-to-talk setup
+## Optional local cleanup
 
-Push-to-talk needs three macOS permissions, granted to Chatter:
+Cleanup uses a small chat-capable GGUF model through `llama-server` from
+[llama.cpp](https://github.com/ggml-org/llama.cpp). Set these two paths in
+`~/Library/Application Support/Chatter/config.json` after the first run:
 
-1. **System Settings → Privacy & Security → Accessibility** — add Chatter,
-   needed to simulate the Cmd+V paste.
-2. **System Settings → Privacy & Security → Input Monitoring** — add Chatter,
-   needed to detect the global Right Shift hold.
-3. **System Settings → Privacy & Security → Microphone** — grant when
-   prompted, needed to record your voice.
-
-The permission entry must be the installed app at `/Applications/Chatter.app`.
-Enable Chatter when macOS asks for permission; if Chatter is missing, click
-**+**, choose `/Applications/Chatter.app`, and turn Chatter on. Do not change
-permissions for unrelated apps. Chatter's onboarding checks macOS's actual
-cross-application authorization rather than accepting a temporary test
-listener. After enabling Chatter, return to the app and continue once;
-quitting and reopening the same installed release should not require you to
-repeat setup.
-
-The Settings tab lets you choose and test the input device, toggle local AI
-cleanup, and choose an automatic writing context. Automatic context uses only
-the foreground app and window title to distinguish email, notes, coding/AI,
-and social writing; it never reads the page or document.
-
-The **Insights** tab is a local activity view over Chatter's saved dictation
-history. It shows word volume, speaking pace, active-day streaks, foreground
-app context, dictionary/cleanup activity, paste success, and finishing time.
-It does not use an account or network analytics; clearing dictation history
-also removes the source used for these summaries.
-
-If push-to-talk is unavailable, the Live Dictation tab shows exactly which
-macOS permission is missing and a **Finish setup** button. Once the final
-toggle is enabled, Chatter starts the listener automatically without a
-relaunch.
-
-Once granted, choose the microphone in Settings, hold Right Shift anywhere,
-speak, and release — a status HUD appears at the MacBook notch and shows live
-partial text while you talk. When you are working on an attached display, the
-same HUD is mirrored there so it remains in your field of view. The final
-(optionally cleaned-up) text pastes
-wherever your cursor is focused. The compact HUD follows the newest words
-of a long live transcript; the full draft remains visible in the Live
-Dictation tab. Even without
-Accessibility granted, the result is always copied to the clipboard, so
-manual Cmd+V works as a fallback. Toggle push-to-talk on/off from the
-menu-bar (tray) icon; closing the main window does not quit the app, only
-"Quit Chatter" from the tray menu does.
-
-### Custom dictionary + auto-learning
-
-Chatter keeps a personal dictionary of words the ASR consistently mishears
-(accents, names, jargon) — manage it from the "Custom Dictionary" table in
-the main window, or let Chatter learn automatically: after a push-to-talk
-paste, it watches the field you pasted into (via the same Accessibility
-trust used for paste simulation — nothing else is monitored) for about a
-minute. If you correct exactly one word — or insert a missing space in a
-fused word — it's saved to the dictionary and applied to every transcript
-from then on, both as a direct substitution and as a hint to the AI cleanup
-pass. This is word-level personalization, not
-model retraining: `transcribe.cpp` is inference-only, so the ASR's actual
-recognition of your voice/accent doesn't change, but confirmed corrections
-do get remembered and reapplied.
-
-## AI cleanup (optional)
-
-Chatter can run raw transcripts through a small local LLM to fix punctuation,
-strip filler words, recognize explicit self-corrections, and clean the latest
-live preview. Clear spoken shopping/list requests are rendered with stable
-item boundaries. Long transcripts get a dynamic output budget instead of an
-arbitrary 512-token ceiling. Toggle it with the
-"Clean up with local AI (parallel) ✨" checkbox. It runs on a background
-thread while Nemotron continues transcribing, so the streaming path and HUD
-do not wait for cleanup; the final paste uses a ready cleanup result when one
-is available. The final transcript is pasted as one operation rather than
-typed character by character, while Chatter restores the clipboard it
-temporarily uses for that paste:
-
-1. Have a `llama-server` binary (from
-   [llama.cpp](https://github.com/ggml-org/llama.cpp)) and a chat-capable
-   GGUF model (Gemma/Llama/Qwen family) somewhere on disk.
-2. Set `llama_server_bin` and `llama_model_path` in
-   `~/Library/Application Support/Chatter/config.json` (created after first
-   run) to their absolute paths.
-
-If unconfigured or the server fails to start, Chatter silently falls back to
-the raw transcript — cleanup is never required for either flow to work.
-
-The Settings tab also exposes an experimental Gemma multi-token prediction
-toggle. It auto-detects a matching `MTP/` head beside the configured GGUF,
-but is off by default because short cleanup requests can be slower on some
-Apple Silicon/llama.cpp combinations. It never changes the one-model
-Nemotron ASR path.
-
-## Notes
-
-- Settings shows the installed Chatter version and can check the public GitHub
-  Releases page for a newer DMG. Automatic checks are local and optional; no
-  transcript, account, or device data is sent. If an update is found while
-  Chatter is running, macOS can show a native notification and the menu-bar
-  menu exposes the download link.
-- Phrase-level SRT/VTT works when the model returns segment timestamps. The
-  separate word-level export uses real word or token timings; Chatter never
-  invents word timings from a whole phrase. Existing phrase-only history
-  entries need to be transcribed again to create word timings.
-- transcribe.cpp serializes one run per model session; Chatter keeps one
-  persistent session per flow (file transcription and push-to-talk each have
-  their own), so within a flow only one transcription runs at a time.
-- Gemma's chat template defaults to emitting a chain-of-thought block before
-  its answer, which can eat the whole token budget and return an empty
-  cleanup result — Chatter disables it via `chat_template_kwargs:
-  {enable_thinking: false}`. Worth checking for if you swap in a different
-  reasoning-capable model for the formatting pass.
-- If you hit a `transcribe_cpp` import error, check
-  `transcribe_cpp.backends()` in a Python shell to see what's registered on
-  your machine — the API surface is still evolving (library is v0.1.x).
-
-## Known limitations
-
-- **Permission reset after repackaging**: macOS privacy grants are tied to the
-  executable identity. The public DMG uses a stable release signing identity,
-  but local ad-hoc builds, development certificates, or moving a locally
-  rebuilt app can require granting Chatter access again; this does not affect
-  the model or configuration files.
-- **Not portable**: `Chatter.app` hardcodes this checkout's absolute paths at
-  build time. Cloning the repo elsewhere requires rebuilding it there with
-  `./packaging/build_app.sh`.
-
-## Building transcribe.cpp from source (only if no prebuilt wheel exists)
-
-```bash
-git clone https://github.com/handy-computer/transcribe.cpp
-cd transcribe.cpp
-cmake -B build-shared -DTRANSCRIBE_BUILD_SHARED=ON
-cmake --build build-shared --target transcribe
+```json
+{
+  "llama_server_bin": "/absolute/path/to/llama-server",
+  "llama_model_path": "/absolute/path/to/cleanup-model.gguf"
+}
 ```
 
-Then point Chatter at it before running:
+If the server is not configured or cannot start, Chatter keeps the raw
+transcript. Cleanup is never required for live or file transcription.
+
+The experimental Gemma multi-token prediction setting can use a matching
+`MTP/` head beside a compatible cleanup model. It affects only the optional
+language-model pass; it is not part of Nemotron's ASR path.
+
+## A few details worth knowing
+
+- Chatter saves history, dictionary entries, and insights locally. There is no
+  account or cloud analytics layer.
+- The automatic writing context uses the foreground app name and window title
+  as a hint. It does not read the page, document, or editor contents.
+- Word-level subtitle export uses timings returned by the selected model. If a
+  model only returns phrase timestamps, Chatter does not invent word timings.
+- Local development builds can need a fresh permission grant because macOS
+  ties privacy permissions to an app's signed identity. Release builds use the
+  stable Chatter release identity.
+- A locally built bundle contains the checkout paths used at build time. If you
+  move the repository, rebuild the app.
+
+## Test the project
+
+Run the test suite from the repository root:
 
 ```bash
-export TRANSCRIBE_LIBRARY=/path/to/transcribe.cpp/build-shared/src/libtranscribe.dylib
+python -m unittest discover -s tests -q
 ```
+
+The tests cover hotkey options, audio and transcription behavior, the live
+editor, dictionary learning, formatting, insights, and update checks.
+
+## Project map
+
+```text
+chatter/                 App, audio pipeline, HUD, settings, and UI
+tests/                   Unit tests for the local pipeline and user flows
+docs/model-guide.md      Short model-selection guide
+docs/index.html          Static landing page
+packaging/build_app.sh   macOS app build
+packaging/make_icon.py   Character icon generation
+```
+
+Chatter is still being shaped. The goal is a useful local tool first: fast
+enough to stay in the flow, clear enough to trust, and playful enough to make
+dictation feel less like a utility.

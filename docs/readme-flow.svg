@@ -1,0 +1,68 @@
+<svg width="1200" height="420" viewBox="0 0 1200 420" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">How Chatter turns speech into text</title>
+  <desc id="desc">A four-step diagram showing a key press, live speech recognition, optional local cleanup, and text pasted into the focused app.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1200" y2="420" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#211612"/>
+      <stop offset="1" stop-color="#120D0B"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="70" y1="105" x2="1100" y2="325" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FF9A55"/>
+      <stop offset="1" stop-color="#F1843B"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="420" rx="28" fill="url(#background)"/>
+  <circle cx="1040" cy="20" r="150" fill="#F1843B" fill-opacity="0.12" filter="url(#glow)"/>
+  <circle cx="1040" cy="20" r="92" fill="#F1843B" fill-opacity="0.08"/>
+
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" fill="#F8EEE8">
+    <text x="58" y="64" font-size="13" font-weight="700" letter-spacing="2.4" fill="#F1843B">THE CHATTER LOOP</text>
+    <text x="58" y="104" font-size="30" font-weight="750" letter-spacing="-0.8">Speak once. Keep your hands on the keyboard.</text>
+    <text x="58" y="132" font-size="15" fill="#B9AAA3">One local speech path from the first syllable to the text in your focused app.</text>
+  </g>
+
+  <g transform="translate(58 182)">
+    <rect width="220" height="150" rx="18" fill="#2B1D17" stroke="#6B493B"/>
+    <circle cx="42" cy="42" r="24" fill="#000"/>
+    <path d="M34 39C29 34 31 27 37 27C42 29 44 34 43 39M50 39C55 34 53 27 47 27C42 29 40 34 41 39" fill="#C85609"/>
+    <path d="M28 55C28 44 35 40 42 40C49 40 56 44 56 55C56 65 50 70 42 70C34 70 28 65 28 55Z" fill="#F1843B"/>
+    <path d="M36 55H36.1M48 55H48.1M36 61C40 65 44 65 48 61" stroke="#321C12" stroke-width="2.5" stroke-linecap="round"/>
+    <text x="24" y="100" font-size="17" font-weight="700" fill="#F8EEE8">Hold a key</text>
+    <text x="24" y="124" font-size="13" fill="#B9AAA3">The notch wakes up at once.</text>
+  </g>
+
+  <g transform="translate(334 182)">
+    <rect width="220" height="150" rx="18" fill="#2B1D17" stroke="#6B493B"/>
+    <path d="M26 52H194" stroke="#563A30" stroke-width="2"/>
+    <path d="M30 52C45 52 44 36 58 36C72 36 70 66 84 66C98 66 96 26 110 26C124 26 122 75 136 75C150 75 149 44 163 44C177 44 176 52 190 52" stroke="url(#accent)" stroke-width="4" stroke-linecap="round"/>
+    <text x="24" y="100" font-size="17" font-weight="700" fill="#F8EEE8">Live ASR</text>
+    <text x="24" y="124" font-size="13" fill="#B9AAA3">Nemotron 3.5 keeps the path moving.</text>
+  </g>
+
+  <g transform="translate(610 182)">
+    <rect width="220" height="150" rx="18" fill="#2B1D17" stroke="#6B493B"/>
+    <circle cx="42" cy="52" r="22" fill="#F1843B" fill-opacity="0.14" stroke="#F1843B"/>
+    <path d="M34 52H50M42 44V60" stroke="#F1843B" stroke-width="2.5" stroke-linecap="round"/>
+    <text x="24" y="100" font-size="17" font-weight="700" fill="#F8EEE8">Optional cleanup</text>
+    <text x="24" y="124" font-size="13" fill="#B9AAA3">A local LLM can fix the rough edges.</text>
+  </g>
+
+  <g transform="translate(886 182)">
+    <rect width="220" height="150" rx="18" fill="#2B1D17" stroke="#F1843B" stroke-opacity="0.7"/>
+    <rect x="24" y="28" width="172" height="47" rx="10" fill="#17100D" stroke="#563A30"/>
+    <path d="M40 51H72M82 51H112M122 51H177" stroke="#F8EEE8" stroke-opacity="0.82" stroke-width="4" stroke-linecap="round"/>
+    <text x="24" y="100" font-size="17" font-weight="700" fill="#F8EEE8">Paste and move on</text>
+    <text x="24" y="124" font-size="13" fill="#B9AAA3">Text lands where your cursor is.</text>
+  </g>
+
+  <g stroke="#F1843B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" opacity="0.85">
+    <path d="M292 257H318M304 247L318 257L304 267"/>
+    <path d="M568 257H594M580 247L594 257L580 267"/>
+    <path d="M844 257H870M856 247L870 257L856 267"/>
+  </g>
+
+  <text x="58" y="378" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" font-size="13" fill="#806E66">Audio, transcripts, dictionary entries, and cleanup stay on this Mac.</text>
+</svg>
