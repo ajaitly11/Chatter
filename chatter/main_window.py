@@ -1417,10 +1417,6 @@ class MainWindow(QMainWindow):
 
         self.practice_box = LiveDictationTextEdit()
         self.practice_box.installEventFilter(self)
-        self.practice_box.setToolTip(
-            "Command+Delete or Command+Backspace clears the current line. "
-            "Option+Delete removes one word."
-        )
         self.practice_box.setPlaceholderText(
             "Click here, then hold your push-to-talk key and start talking — "
             "your words will show up right in this box."
