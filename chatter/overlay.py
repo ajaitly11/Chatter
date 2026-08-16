@@ -15,6 +15,7 @@ import logging
 import AppKit
 import objc
 import Quartz
+from Foundation import NSNotificationCenter, NSOperationQueue
 from PyQt6.QtCore import (
     QEasingCurve,
     QPoint,
@@ -246,6 +247,7 @@ def _make_overlay_appear_everywhere(widget):
             getattr(AppKit, "NSWindowStyleMaskBorderless", 0)
             | getattr(AppKit, "NSWindowStyleMaskNonactivatingPanel", 0)
             | getattr(AppKit, "NSWindowStyleMaskUtilityWindow", 0)
+            | getattr(AppKit, "NSWindowStyleMaskHUDWindow", 0)
         )
         ns_window.setStyleMask_(style_mask)
         ns_window.setOpaque_(False)
@@ -269,6 +271,11 @@ def _make_overlay_appear_everywhere(widget):
         # settable at runtime even though Qt created the panel.
         ns_window.setFloatingPanel_(True)
         ns_window.setBecomesKeyOnlyIfNeeded_(False)
+        # AppKit can normalize the style mask when a Qt-created panel is
+        # promoted to a floating panel. Reapply the boring.notch-compatible
+        # HUD mask after that promotion so a screen/app transition cannot
+        # silently turn this back into an ordinary utility window.
+        ns_window.setStyleMask_(style_mask)
         if hasattr(AppKit, "NSWindowAnimationBehaviorNone"):
             ns_window.setAnimationBehavior_(AppKit.NSWindowAnimationBehaviorNone)
         # setFloatingPanel_ has a side effect confirmed live: it silently
@@ -421,6 +428,15 @@ class Overlay(QWidget):
         self._front_reassert_timer.setInterval(280)
         self._front_reassert_timer.timeout.connect(self._reassert_front)
 
+        # App switching and display/fullscreen changes are asynchronous
+        # WindowServer events. A periodic re-order handles the steady state,
+        # but the native notifications let us repair the panel immediately
+        # when a new app, Space, recorder, or display configuration appears.
+        # This mirrors boring.notch's screen-configuration observer instead
+        # of relying on a user toggling fullscreen to force AppKit to repaint.
+        self._native_observers = []
+        self._register_native_environment_observers()
+
         # Only used to reposition an already-visible pill if the target
         # screen changes mid-session (rare) — not for show/hide anymore.
         self._move_anim = QPropertyAnimation(self, b"pos")
@@ -443,6 +459,51 @@ class Overlay(QWidget):
         self._notch_mode = False
         self._display_text = ""
         self._position_children()
+
+    def _register_native_environment_observers(self):
+        def observe(center, name):
+            try:
+                token = center.addObserverForName_object_queue_usingBlock_(
+                    name,
+                    None,
+                    NSOperationQueue.mainQueue(),
+                    self._native_environment_changed,
+                )
+                self._native_observers.append((center, token))
+            except Exception:
+                logger.exception("couldn't observe native HUD environment event: %s", name)
+
+        app_center = NSNotificationCenter.defaultCenter()
+        observe(
+            app_center,
+            getattr(
+                AppKit,
+                "NSApplicationDidChangeScreenParametersNotification",
+                "NSApplicationDidChangeScreenParametersNotification",
+            ),
+        )
+        observe(
+            app_center,
+            getattr(AppKit, "NSWindowDidChangeScreenNotification", "NSWindowDidChangeScreenNotification"),
+        )
+
+        workspace_center = AppKit.NSWorkspace.sharedWorkspace().notificationCenter()
+        for name in (
+            getattr(AppKit, "NSWorkspaceDidActivateApplicationNotification", "NSWorkspaceDidActivateApplicationNotification"),
+            getattr(AppKit, "NSWorkspaceDidLaunchApplicationNotification", "NSWorkspaceDidLaunchApplicationNotification"),
+            getattr(AppKit, "NSWorkspaceDidTerminateApplicationNotification", "NSWorkspaceDidTerminateApplicationNotification"),
+        ):
+            observe(workspace_center, name)
+
+    def _native_environment_changed(self, _notification):
+        """Repair the HUD after AppKit changes the active app, Space, or screen."""
+        self._screen_geometry = None
+        if not self.isVisible() or self._hiding:
+            return
+        if self._display_mode == "active" and not self.targets_external_display():
+            self.dismiss()
+            return
+        self._refresh_presentation()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -558,6 +619,24 @@ class Overlay(QWidget):
         self._hiding = False
         self._screen_geometry = None
 
+    def _refresh_presentation(self):
+        """Recalculate screen placement and restore the native panel ordering."""
+        if not self.isVisible() or self._hiding:
+            return
+        old_geometry = self.geometry()
+        rx, ry, width, notch_mode = self._compute_geometry()
+        self._notch_mode = notch_mode
+        self._shadow.setEnabled(notch_mode)
+        target_height = self._physical_notch_height + HEIGHT if notch_mode else HEIGHT
+        target = QRectF(rx, ry, width, target_height).toRect()
+        self._position_children()
+        if old_geometry.size() != target.size():
+            self.setGeometry(target)
+        else:
+            self._animate_to(rx, ry)
+        _make_overlay_appear_everywhere(self)
+        _order_overlay_front(self)
+
     def _animate_to(self, x: int, y: int):
         self._move_anim.stop()
         self._move_anim.setStartValue(self.pos())
@@ -589,6 +668,14 @@ class Overlay(QWidget):
         caller provides it, allowing literal statuses and live transcript
         previews to share the same HUD surface."""
         self._hiding = False
+        # A new press can arrive while the previous Done/Error fade is still
+        # running. Stop that old animation and restore full opacity before
+        # reusing the already-visible panel; otherwise the HUD can be fully
+        # configured and ordered in front while remaining visually invisible.
+        self._fade_anim.stop()
+        if self.isVisible():
+            self._opacity = 1.0
+            self.setWindowOpacity(1.0)
         mascot_state = "listening" if state == "listening" else state
         self._mascot.set_state(mascot_state)
         self._hide_timer.stop()
