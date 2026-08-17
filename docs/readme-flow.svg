@@ -8,7 +8,7 @@
     </linearGradient>
     <linearGradient id="accent" x1="70" y1="105" x2="1100" y2="325" gradientUnits="userSpaceOnUse">
       <stop stop-color="#FF9A55"/>
-      <stop offset="1" stop-color="#F1843B"/>
+      <stop offset="1" stop-color="#EB7C33"/>
     </linearGradient>
     <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
       <feGaussianBlur stdDeviation="18"/>
@@ -27,9 +27,14 @@
   <g transform="translate(58 182)">
     <rect width="220" height="150" rx="18" fill="#2B1D17" stroke="#6B493B"/>
     <circle cx="42" cy="42" r="24" fill="#000"/>
-    <path d="M34 39C29 34 31 27 37 27C42 29 44 34 43 39M50 39C55 34 53 27 47 27C42 29 40 34 41 39" fill="#C85609"/>
-    <path d="M28 55C28 44 35 40 42 40C49 40 56 44 56 55C56 65 50 70 42 70C34 70 28 65 28 55Z" fill="#F1843B"/>
-    <path d="M36 55H36.1M48 55H48.1M36 61C40 65 44 65 48 61" stroke="#321C12" stroke-width="2.5" stroke-linecap="round"/>
+    <g transform="translate(20 18) scale(.44)">
+      <path d="M27 10c4.9 0 7 5.9 7 13.2S31.9 36 27 36s-7-5.5-7-12.8S22.1 10 27 10Z" transform="rotate(-16 27 23)" fill="#B75400"/>
+      <path d="M73 10c4.9 0 7 5.9 7 13.2S77.9 36 73 36s-7-5.5-7-12.8S68.1 10 73 10Z" transform="rotate(16 73 23)" fill="#B75400"/>
+      <path d="M46.16 46H46.16C65.96 46 82 58.46 82 74.16v0c0 19.8-16.62 35.84-37.12 35.84C30.04 110 18 95.1 18 79.28v-2.56C18 59.75 30.61 46 46.16 46Z" fill="#EB7C33"/>
+      <circle cx="40" cy="74" r="3.2" fill="#2A1B16"/>
+      <circle cx="60" cy="74" r="3.2" fill="#2A1B16"/>
+      <path d="M42 86q8 6 16 0" fill="none" stroke="#2A1B16" stroke-linecap="round" stroke-width="2.4"/>
+    </g>
     <text x="24" y="100" font-size="17" font-weight="700" fill="#F8EEE8">Hold a key</text>
     <text x="24" y="124" font-size="13" fill="#B9AAA3">The notch wakes up at once.</text>
   </g>

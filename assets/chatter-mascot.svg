@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 110" role="img" aria-labelledby="title desc">
+  <title id="title">Chatter mascot</title>
+  <desc id="desc">A small orange listening character with two ears and a smile.</desc>
+  <g>
+    <path fill="#B75400" d="M27 10c4.9 0 7 5.9 7 13.2S31.9 36 27 36s-7-5.5-7-12.8S22.1 10 27 10Z" transform="rotate(-16 27 23)"/>
+    <path fill="#B75400" d="M73 10c4.9 0 7 5.9 7 13.2S77.9 36 73 36s-7-5.5-7-12.8S68.1 10 73 10Z" transform="rotate(16 73 23)"/>
+    <path fill="#EB7C33" d="M46.16 46H46.16C65.96 46 82 58.46 82 74.16v0c0 19.8-16.62 35.84-37.12 35.84C30.04 110 18 95.1 18 79.28v-2.56C18 59.75 30.61 46 46.16 46Z"/>
+    <circle cx="40" cy="74" r="3.2" fill="#2A1B16"/>
+    <circle cx="60" cy="74" r="3.2" fill="#2A1B16"/>
+    <path d="M42 86q8 6 16 0" fill="none" stroke="#2A1B16" stroke-linecap="round" stroke-width="2.4"/>
+  </g>
+</svg>
