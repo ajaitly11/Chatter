@@ -276,9 +276,10 @@
     .calendar-cell:nth-child(5n) { background: rgba(190, 163, 51, .72); }
     .calendar-cell:nth-child(7n) { background: rgba(219, 148, 14, .3); }
 
-    .final { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 50px; margin: clamp(90px, 10vw, 140px) 0 80px; padding: 42px 0 0; border-top: 1px solid var(--ink); }
-    .final h2 { max-width: 740px; margin: 14px 0 0; font-family: var(--display); font-size: clamp(67px, 11vw, 160px); font-weight: 500; line-height: .83; letter-spacing: -.085em; }
-    .final p { max-width: 320px; margin: 24px 0 0; color: var(--muted); font-size: 15px; line-height: 1.5; }
+    .final { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 50px; margin: clamp(90px, 10vw, 140px) 0 80px; padding: 42px 0 0; border-top: 1px solid var(--ink); }
+    .final-copy { display: grid; align-content: start; gap: 16px; }
+    .final h2 { max-width: 740px; margin: 0; font-family: var(--display); font-size: clamp(67px, 11vw, 160px); font-weight: 500; line-height: .83; letter-spacing: -.085em; }
+    .final p { max-width: 320px; margin: 0; color: var(--muted); font-size: 15px; line-height: 1.5; }
     .button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 50px; padding: 0 19px; border-radius: 11px; text-decoration: none; font-size: 12px; font-weight: 850; white-space: nowrap; transition: transform .2s ease, background .2s ease; }
     .button.primary { color: var(--surface); background: var(--ink); box-shadow: 0 12px 25px rgba(23, 22, 20, .13); }
     .button.primary:hover { transform: translateY(-3px); background: var(--orange-deep); }
@@ -454,10 +455,10 @@
         <div class="learning-card" data-reveal>
           <div class="learning-header"><span>Personal dictionary</span><strong>Learning</strong></div>
           <div class="edit-pair"><div class="edit-line old"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m3 3 10 10M13 3 3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>hi, my name is ashlyn</div><div class="edit-line new"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m3 8 3.2 3L13 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Hi, my name is Ashlynn.</div></div>
-          <div class="dictionary-memory"><img src="assets/chatter-mascot.svg" alt="Chatty"><span><strong>Chatty saved "Ashlynn" to your dictionary</strong></span></div>
-          <p class="section-note">Say it again. Next time, Chatty spells it right on the first try. No fixing required.</p>
+          <div class="dictionary-memory"><img src="assets/chatter-mascot.svg" alt="Chatter"><span><strong>Chatter saved "Ashlynn" to your dictionary</strong></span></div>
+          <p class="section-note">Say it again. Next time, Chatter spells it right on the first try. No fixing required.</p>
         </div>
-        <div data-reveal><h2 class="section-heading">The more you talk,<br>the more Chatty gets you.</h2><p class="section-note">The first time it mishears a name or a piece of jargon, correct it once. Chatty remembers it for good.</p></div>
+        <div data-reveal><h2 class="section-heading">The more you talk,<br>the more Chatter gets you.</h2></div>
       </section>
 
       <section class="insights-story">
@@ -477,7 +478,7 @@
       </section>
 
       <section class="final" data-reveal>
-        <div><h2>Go yap.</h2><p>Free forever. No weekly limits. Nothing leaves your Mac.</p></div>
+        <div class="final-copy"><h2>Go yap.</h2><p>Free forever. No weekly limits. Nothing leaves your Mac.</p></div>
         <a class="button primary" href="https://github.com/ajaitly11/Chatter/releases/download/v1.0.7/Chatter-macOS-arm64.dmg">Get Chatter for Mac <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h9m-3-3 3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
       </section>
     </main>
