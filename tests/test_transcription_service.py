@@ -6,6 +6,7 @@ import numpy as np
 
 from chatter.transcription_service import (
     TranscriptionService,
+    StreamingTranscriptionService,
     segments_to_srt,
     streaming_service,
     words_to_srt,
@@ -17,6 +18,10 @@ class _FakeSession:
         self.calls = []
         self.error_timestamps = error_timestamps
         self.error_status = error_status
+        self.closed = False
+
+    def stream(self, **kwargs):
+        return _FakeStream()
 
     def run(self, pcm, **kwargs):
         self.calls.append(kwargs.copy())
@@ -32,12 +37,54 @@ class _FakeSession:
             raise error
         return SimpleNamespace(text="ok", words=())
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.closed = True
+
+
+class _FakeStream:
+    def __init__(self):
+        self.closed = False
+        self.finalized = False
+
+    def feed(self, pcm):
+        return None
+
+    def finalize(self):
+        self.finalized = True
+
+    def text(self):
+        return SimpleNamespace(display="streamed")
+
+    def reset(self):
+        self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.closed = True
+
+
+class _FakeModel:
+    def __init__(self, max_timestamp_kind):
+        self.capabilities = SimpleNamespace(max_timestamp_kind=max_timestamp_kind)
+        self.closed = False
+        self.session_count = 0
+
+    def session(self):
+        self.session_count += 1
+        return _FakeSession()
+
+    def __exit__(self, *exc):
+        self.closed = True
+
 
 def _service_for_test(session, max_timestamp_kind):
     service = TranscriptionService()
-    service._model = SimpleNamespace(
-        capabilities=SimpleNamespace(max_timestamp_kind=max_timestamp_kind)
-    )
+    service._model = _FakeModel(max_timestamp_kind)
     service._session = session
     service._model_path = "model.gguf"
     service._backend = "cpu"
@@ -45,6 +92,70 @@ def _service_for_test(session, max_timestamp_kind):
 
 
 class TranscriptionServiceTests(unittest.TestCase):
+    def test_run_releases_session_but_keeps_warm_model(self):
+        session = _FakeSession()
+        session.closed = False
+        service = _service_for_test(session, "word")
+
+        service.transcribe(
+            np.zeros(1, dtype=np.float32),
+            "model.gguf",
+            "cpu",
+        )
+
+        self.assertTrue(session.closed)
+        self.assertIsNone(service._session)
+        self.assertIsNotNone(service._model)
+
+    def test_one_shot_run_releases_model_too(self):
+        session = _FakeSession()
+        session.closed = False
+        service = _service_for_test(session, "word")
+        model = service._model
+
+        service.transcribe(
+            np.zeros(1, dtype=np.float32),
+            "model.gguf",
+            "cpu",
+            keep_model=False,
+        )
+
+        self.assertTrue(session.closed)
+        self.assertTrue(model.closed)
+        self.assertIsNone(service._session)
+        self.assertIsNone(service._model)
+
+    def test_stream_finalize_releases_stream_and_session_but_keeps_model(self):
+        service = StreamingTranscriptionService()
+        model = _FakeModel("none")
+        session = _FakeSession()
+        stream = _FakeStream()
+        service._model = model
+        service._session = session
+        service._stream = stream
+        service._model_path = "model.gguf"
+        service._backend = "cpu"
+
+        self.assertEqual(service.finalize(trailing_silence_ms=0), "streamed")
+        self.assertTrue(stream.closed)
+        self.assertTrue(session.closed)
+        self.assertIsNone(service._stream)
+        self.assertIsNone(service._session)
+        self.assertIs(service._model, model)
+
+    def test_streaming_model_reuses_model_when_session_is_reopened(self):
+        service = StreamingTranscriptionService()
+        model = _FakeModel("none")
+        service._model = model
+        service._model_path = "model.gguf"
+        service._backend = "cpu"
+
+        service._ensure_session("model.gguf", "cpu")
+
+        self.assertEqual(model.session_count, 1)
+        self.assertIs(service._model, model)
+        self.assertFalse(model.closed)
+
     def test_word_request_downgrades_to_segment_for_segment_only_model(self):
         session = _FakeSession()
         service = _service_for_test(session, "segment")

@@ -400,6 +400,11 @@ class PushToTalkController(QObject):
                 self._collector_thread.join()
 
             raw = np.concatenate(self._raw_chunks) if self._raw_chunks else np.array([], dtype=np.float32)
+            # The streaming decoder already consumed every chunk. Release the
+            # per-chunk references as soon as the contiguous array is built so
+            # a long hold does not keep both representations alive while the
+            # final transcript is formatted and pasted.
+            self._raw_chunks = []
             trimmed = _trim_silence(raw, SAMPLE_RATE)
             peak_rms = _peak_frame_rms(raw, SAMPLE_RATE)
             if trimmed is None:
@@ -414,6 +419,11 @@ class PushToTalkController(QObject):
                 len(raw) / SAMPLE_RATE, peak_rms, _SILENCE_RMS_THRESHOLD,
                 self._stream_speech_started,
             )
+            audio_seconds = round(len(trimmed) / SAMPLE_RATE, 3)
+            # Only the duration is needed after the silence gate. Do not keep
+            # the complete recording alive during optional formatting.
+            del trimmed
+            del raw
 
             self.status_changed.emit("Finalizing…")
             text = self._stream_final_text.strip()
@@ -457,7 +467,7 @@ class PushToTalkController(QObject):
                 text,
                 pasted=pasted,
                 word_count=insights.count_words(text),
-                audio_seconds=round(len(trimmed) / SAMPLE_RATE, 3),
+                audio_seconds=audio_seconds,
                 context_app=context_for_history.app_name,
                 context_mode=context_for_history.mode,
                 cleanup_applied=bool(cfg["formatting_enabled"]),
