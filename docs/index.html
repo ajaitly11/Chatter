@@ -177,6 +177,21 @@
     .scene-claude .app-name::before { background: #c1552f; box-shadow: 0 0 0 4px rgba(193, 85, 47, .18); }
     .scene-claude .chat-stage { color: #b7a898; }
     .scene-claude .chat-pill { background: #fff; border: 1px solid rgba(58, 44, 34, .14); color: #3a2c22; }
+    .scene-generic { background: #fbf8f2; color: var(--ink); }
+    .scene-generic .chat-stage { color: #90877e; }
+    .scene-generic .chat-pill { background: #fff; border: 1px solid rgba(23, 22, 20, .12); color: var(--ink); }
+    .scene-slack { background: #f8f5fb; }
+    .scene-slack .app-name::before { background: #b46bd2; box-shadow: 0 0 0 4px rgba(180, 107, 210, .18); }
+    .scene-notion { background: #fff; }
+    .scene-notion .app-name::before { background: #171614; box-shadow: 0 0 0 4px rgba(23, 22, 20, .1); }
+    .scene-messages { background: #f3f7fb; }
+    .scene-messages .app-name::before { background: #55a9eb; box-shadow: 0 0 0 4px rgba(85, 169, 235, .18); }
+    .scene-terminal { background: #171817; color: #eef1e9; }
+    .scene-terminal .app-toolbar { border-bottom-color: rgba(255, 255, 255, .09); color: #8d958b; }
+    .scene-terminal .app-name { color: #eef1e9; }
+    .scene-terminal .app-name::before { background: #829974; box-shadow: 0 0 0 4px rgba(130, 153, 116, .18); }
+    .scene-terminal .chat-stage { color: #768274; font-family: JetBrains, monospace; font-size: clamp(15px, 2vw, 20px); }
+    .scene-terminal .chat-pill { background: #252925; color: #eef1e9; border-color: rgba(255, 255, 255, .1); }
 
     section { padding-top: clamp(145px, 18vw, 250px); }
     section[id] { scroll-margin-top: 92px; }
@@ -232,8 +247,16 @@
     .insight-board { overflow: hidden; border: 1px solid var(--line); color: var(--ink); background: var(--surface); box-shadow: 0 26px 55px rgba(35, 27, 19, .08); }
     .insight-toolbar { display: flex; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
     .insight-toolbar b { color: var(--green-deep); }
+    .insight-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 18px 23px 0; }
+    .insight-card { min-height: 84px; padding: 13px 14px 11px; border: 1px solid rgba(42, 27, 22, .12); border-radius: 10px; background: #fffaf4; }
+    .insight-card span { display: block; font-size: 9px; font-weight: 850; letter-spacing: .12em; }
+    .insight-card b { display: block; margin-top: 11px; color: #2A1B16; font-family: var(--display); font-size: 30px; font-weight: 500; line-height: .8; letter-spacing: -.06em; }
+    .insight-card.orange span { color: #EB7C33; }
+    .insight-card.amber span { color: #DB940E; }
+    .insight-card.gold span { color: #BEA333; }
     .insight-content { display: grid; grid-template-columns: .85fr 1.15fr; gap: 30px; padding: 26px 23px 28px; }
     .insight-metric { padding-right: 24px; border-right: 1px solid var(--line); }
+    .insight-kicker { display: block; margin-bottom: 12px; color: #EB7C33; font-size: 10px; font-weight: 850; letter-spacing: .12em; }
     .metric-number { display: block; font-family: var(--display); font-size: clamp(55px, 7vw, 88px); line-height: .84; letter-spacing: -.07em; }
     .metric-label { display: block; margin-top: 12px; color: var(--muted); font-size: 11px; }
     .metric-note { margin-top: 36px; color: var(--muted); font-size: 11px; line-height: 1.45; }
@@ -243,15 +266,15 @@
     .metric-mini-grid span { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
     .insight-graph { display: flex; align-items: end; gap: 10px; height: 175px; padding: 0 0 25px; border-bottom: 1px solid var(--line); }
     .bar { display: block; flex: 1; width: 100%; height: var(--bar-height); transform: scaleY(0); transform-origin: bottom; border-radius: 5px 5px 0 0; background: var(--orange); transition: transform .9s cubic-bezier(.22, 1, .36, 1); }
-    .bar:nth-child(2), .bar:nth-child(5) { background: #e8a675; }
-    .bar:nth-child(3), .bar:nth-child(6) { background: var(--green); }
+    .bar:nth-child(2), .bar:nth-child(5) { background: #DB940E; }
+    .bar:nth-child(3), .bar:nth-child(6) { background: #BEA333; }
     .insight-board.is-visible .bar { transform: scaleY(1); }
     .graph-labels { display: flex; justify-content: space-between; margin-top: 9px; color: var(--quiet); font-size: 9px; }
     .insight-calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 24px; }
     .calendar-cell { aspect-ratio: 1; border-radius: 4px; background: var(--paper-deep); }
-    .calendar-cell:nth-child(3n) { background: rgba(239, 125, 53, .66); }
-    .calendar-cell:nth-child(5n) { background: rgba(130, 153, 116, .72); }
-    .calendar-cell:nth-child(7n) { background: rgba(239, 125, 53, .27); }
+    .calendar-cell:nth-child(3n) { background: rgba(235, 124, 51, .66); }
+    .calendar-cell:nth-child(5n) { background: rgba(190, 163, 51, .72); }
+    .calendar-cell:nth-child(7n) { background: rgba(219, 148, 14, .3); }
 
     .final { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 50px; margin: clamp(90px, 10vw, 140px) 0 80px; padding: 42px 0 0; border-top: 1px solid var(--ink); }
     .final h2 { max-width: 740px; margin: 14px 0 0; font-family: var(--display); font-size: clamp(67px, 11vw, 160px); font-weight: 500; line-height: .83; letter-spacing: -.085em; }
@@ -285,6 +308,7 @@
       .section-heading { font-size: clamp(62px, 11vw, 94px); }
       .insight-content { grid-template-columns: 1fr; }
       .insight-metric { padding-right: 0; padding-bottom: 25px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .insight-summary { grid-template-columns: 1fr; }
       .metric-note { margin-top: 28px; }
       .final { grid-template-columns: 1fr; gap: 28px; }
       .final .button { justify-self: start; }
@@ -340,7 +364,7 @@
           <h1 id="hero-title">Built for yapping.</h1>
         </div>
         <div class="hero-stage">
-          <div class="mac-window" id="demo-window" role="img" aria-label="Chatter running on top of Notes, Gmail, ChatGPT, and Claude">
+          <div class="mac-window" id="demo-window" role="img" aria-label="Chatter running on top of Notes, Gmail, ChatGPT, Claude, Slack, Notion, Messages, and Terminal">
             <div class="mac-toolbar"><span class="traffic"></span><span class="traffic"></span><span class="traffic"></span><span class="toolbar-title" id="toolbar-title" aria-hidden="true"></span></div>
             <div class="desktop-surface">
               <div class="physical-notch" aria-hidden="true"></div>
@@ -374,6 +398,26 @@
                 <div class="scene scene-claude" data-scene="claude">
                   <div class="app-toolbar"><span class="app-name">Claude</span></div>
                   <div class="chat-stage">How can I help today?</div>
+                  <div class="chat-pill" data-typed><span class="paste-placeholder">Your words will land here</span></div>
+                </div>
+                <div class="scene scene-generic scene-slack" data-scene="slack">
+                  <div class="app-toolbar"><span class="app-name">Slack</span><span class="app-action"># launch</span></div>
+                  <div class="chat-stage">Share an update with the team</div>
+                  <div class="chat-pill" data-typed><span class="paste-placeholder">Your words will land here</span></div>
+                </div>
+                <div class="scene scene-generic scene-notion" data-scene="notion">
+                  <div class="app-toolbar"><span class="app-name">Notion</span><span class="app-action">Project notes</span></div>
+                  <div class="chat-stage">A blank page, ready for the thought</div>
+                  <div class="chat-pill" data-typed><span class="paste-placeholder">Your words will land here</span></div>
+                </div>
+                <div class="scene scene-generic scene-messages" data-scene="messages">
+                  <div class="app-toolbar"><span class="app-name">Messages</span><span class="app-action">New message</span></div>
+                  <div class="chat-stage">Send a quick reply</div>
+                  <div class="chat-pill" data-typed><span class="paste-placeholder">Your words will land here</span></div>
+                </div>
+                <div class="scene scene-generic scene-terminal" data-scene="terminal">
+                  <div class="app-toolbar"><span class="app-name">Terminal</span><span class="app-action">zsh</span></div>
+                  <div class="chat-stage">$ chatter --ready</div>
                   <div class="chat-pill" data-typed><span class="paste-placeholder">Your words will land here</span></div>
                 </div>
               </div>
@@ -420,8 +464,13 @@
         <div data-reveal><h2 class="section-heading">Your voice,<br>by the numbers.</h2><p class="section-note">Streaks, words per minute, how much you've said this week. All local, all yours.</p></div>
         <div class="insight-board" data-reveal>
           <div class="insight-toolbar"><span>Chatter / insights</span><b>stored locally</b></div>
+          <div class="insight-summary">
+            <div class="insight-card orange"><span>DICTATIONS</span><b data-count="239">0</b></div>
+            <div class="insight-card amber"><span>WORDS TODAY</span><b data-count="2808">0</b></div>
+            <div class="insight-card gold"><span>WORDS LEARNED</span><b data-count="19">0</b></div>
+          </div>
           <div class="insight-content">
-            <div class="insight-metric"><span class="metric-number" data-count="1248">0</span><span class="metric-label">words spoken this month</span><div class="metric-mini-grid"><div><b data-count="312">0</b><span>today</span></div><div><b data-count="18">0</b><span>words learned</span></div><div><b>138</b><span>WPM</span></div></div><p class="metric-note">Your rhythm and progress, kept on this Mac.</p></div>
+            <div class="insight-metric"><span class="insight-kicker">WORDS DICTATED</span><span class="metric-number" data-count="5301">0</span><span class="metric-label">words spoken this month</span><div class="metric-mini-grid"><div><b data-count="3180">0</b><span>today</span></div><div><b data-count="15">0</b><span>words learned</span></div><div><b>133</b><span>WPM</span></div></div><p class="metric-note">Your rhythm and progress, kept on this Mac.</p></div>
             <div><div class="insight-graph" aria-label="Words spoken across six recent sessions"><i class="bar" style="--bar-height:36%"></i><i class="bar" style="--bar-height:52%"></i><i class="bar" style="--bar-height:29%"></i><i class="bar" style="--bar-height:68%"></i><i class="bar" style="--bar-height:47%"></i><i class="bar" style="--bar-height:84%"></i></div><div class="graph-labels"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Today</span></div><div class="insight-calendar" aria-hidden="true"> <i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i></div></div>
           </div>
         </div>
@@ -522,7 +571,7 @@
       if (!wasOpen) requestAnimationFrame(() => notch.classList.add('is-open'));
     };
 
-    // Four apps, each with its own kind of dictation target. "notes" fills
+    // A quick tour through the places people already work. "notes" fills
     // a to-do list item by item (split on the same commas/period that end
     // each spoken clause); every other scene grows one block of text in
     // its own message box. The notch above stays the single source of
@@ -543,6 +592,22 @@
       {
         key: 'claude', label: 'CLAUDE',
         words: ['Can', 'you', 'research', 'the', 'best', 'noise', 'cancelling', 'headphones', 'under', 'three', 'hundred', 'dollars.'],
+      },
+      {
+        key: 'slack', label: 'SLACK',
+        words: ['Quick', 'update,', 'the', 'launch', 'cut', 'is', 'ready', 'for', 'review.'],
+      },
+      {
+        key: 'notion', label: 'NOTION',
+        words: ['Capture', 'the', 'idea', 'before', 'it', 'gets', 'away.'],
+      },
+      {
+        key: 'messages', label: 'MESSAGES',
+        words: ['Running', 'ten', 'minutes', 'late,', 'see', 'you', 'soon.'],
+      },
+      {
+        key: 'terminal', label: 'TERMINAL',
+        words: ['Ship', 'the', 'small', 'fix,', 'then', 'run', 'the', 'tests.'],
       },
     ];
     let sceneCursor = 0;
@@ -598,13 +663,13 @@
         await wait(1400);
         return;
       }
-      await wait(500);
+      await wait(260);
       if (active !== sessionId) return;
       setNotch('listening', 'Listening locally', '');
       let transcript = '';
       let segment = '';
       for (const word of scene.words) {
-        await wait(word.endsWith(',') ? 160 : 200);
+        await wait(word.endsWith(',') ? 82 : 116);
         if (active !== sessionId) return;
         transcript = transcript ? `${transcript} ${word}` : word;
         segment = segment ? `${segment} ${word}` : word;
@@ -619,11 +684,11 @@
         }
       }
       setNotch('finishing', 'Finishing locally', transcript);
-      await wait(700);
+      await wait(360);
       if (active !== sessionId) return;
       setNotch('done', 'Done', finalText);
       if (!isNotes) typeIntoTarget(target, finalText, true);
-      await wait(2600);
+      await wait(1000);
     };
 
     const playLoop = async () => {
