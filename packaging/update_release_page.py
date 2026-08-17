@@ -35,10 +35,14 @@ def main() -> None:
     # places (navigation, hero, and final CTA). Keep every one of those links
     # on the tagged release instead of forcing the design to have a single
     # button just to satisfy the release automation.
-    if download_count < 1 or note_count != 1:
+    # The current landing page intentionally keeps the download surface
+    # minimal and does not show a version note. Older layouts did show one,
+    # so update it when present, but do not make the release pipeline depend
+    # on a piece of copy that the design may legitimately omit.
+    if download_count < 1:
         raise SystemExit(
-            "expected at least one download link and exactly one version note in docs/index.html "
-            f"(found {download_count} and {note_count})"
+            "expected at least one download link in docs/index.html "
+            f"(found {download_count}; version notes updated: {note_count})"
         )
 
     path.write_text(html, encoding="utf-8")
