@@ -287,7 +287,8 @@ class TranscribeWorker(QThread):
             # provide, then safely downgrades to segment timing when needed.
             language = config.load().get("language", "en") or None
             result = service.transcribe(
-                pcm, self.model_path, self.backend, language=language, timestamps=self.timestamp_kind
+                pcm, self.model_path, self.backend, keep_model=False,
+                language=language, timestamps=self.timestamp_kind,
             )
             text = dictionary.apply_corrections(result.text)
             words = getattr(result, "words", None)
@@ -1274,8 +1275,6 @@ class MainWindow(QMainWindow):
         self._advanced_mtp_checkbox = None
         self.media_path: str | None = None
         self.file_model_path: str | None = None
-        self.last_words = None
-        self.last_segments = None
         self.worker: TranscribeWorker | None = None
         self._latest_live_preview = ""
         self._live_idle_timer = QTimer(self)
@@ -2767,8 +2766,6 @@ class MainWindow(QMainWindow):
     def on_finished(self, text: str, words, segments, tokens):
         self.progress_bar.hide()
         self.status_label.setText("Done.")
-        self.last_words = words
-        self.last_segments = segments
         self.transcribe_btn.setEnabled(True)
         self.open_btn.setEnabled(True)
         word_dicts = []

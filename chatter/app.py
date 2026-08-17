@@ -846,27 +846,13 @@ def run():
             permissions.is_trusted(),
         )
 
-    def warm_up_models():
-        backend = config.load().get("backend", "auto")
-        streaming_path = get_streaming_model_path()
-        logger.info("streaming model warm-up starting: path=%s backend=%s", streaming_path, backend)
-        if streaming_path:
-            try:
-                ready = streaming_service.warm_up(streaming_path, backend)
-                logger.info(
-                    "streaming model warm-up: ready=%s path=%s backend=%s",
-                    ready, streaming_path, streaming_service.backend_name(),
-                )
-            except Exception:
-                logger.exception("streaming model warm-up failed: path=%s", streaming_path)
-        else:
-            logger.warning("streaming model warm-up skipped: no local streaming model found")
-
-    logger.info("starting background streaming model warm-up")
-    threading.Thread(target=warm_up_models, daemon=True).start()
-
-    if cfg.get("formatting_enabled", True):
-        threading.Thread(target=formatter.warm_up, daemon=True).start()
+    # Do not eagerly load native models at app startup. A single Nemotron
+    # checkpoint uses roughly 850 MB of macOS physical footprint on Metal even
+    # before the first utterance. The hotkey collector already loads the live
+    # model before it consumes its queued audio, so this defers that cost until
+    # the feature is actually used without changing model, backend, or output.
+    # The optional formatter follows the same lazy path in format_transcript().
+    logger.info("native model warm-up deferred until first use")
 
     window.show()
     sys.exit(app.exec())

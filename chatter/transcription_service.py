@@ -1,6 +1,7 @@
-"""Shared transcription core: model discovery, audio decoding, and a persistent
-Model+Session so repeat calls (especially push-to-talk) don't pay a multi-second
-model-load cost every time.
+"""Shared transcription core: model discovery, audio decoding, and persistent
+model handles with short-lived sessions so repeat calls (especially
+push-to-talk) don't pay a multi-second model-load cost every time while
+finished decoder workspaces can be reclaimed.
 """
 
 import subprocess
@@ -148,7 +149,7 @@ def _timed_items_to_srt(items) -> str:
 
 
 class TranscriptionService:
-    """Lazily loads one Model + Session and reuses it for every call.
+    """Lazily loads one Model and reuses it while keeping Sessions ephemeral.
 
     transcribe.cpp serializes one run per session, so a lock guards session.run()
     against overlapping calls from the file-open flow and push-to-talk.
@@ -161,8 +162,16 @@ class TranscriptionService:
         self._model_path = None
         self._backend = None
 
+    def _close_session(self):
+        if self._session is not None:
+            self._session.__exit__(None, None, None)
+            self._session = None
+
     def _ensure_session(self, model_path: str, backend: str):
-        if self._session is not None and self._model_path == model_path and self._backend == backend:
+        if self._model is not None and self._model_path == model_path and self._backend == backend:
+            if self._session is None:
+                self._session = self._model.session()
+                self._session.__enter__()
             return
         self.close()
         import transcribe_cpp
@@ -174,30 +183,47 @@ class TranscriptionService:
         self._model_path = model_path
         self._backend = backend
 
-    def transcribe(self, pcm: np.ndarray, model_path: str, backend: str, **run_kwargs):
+    def _close_model(self):
+        self._close_session()
+        if self._model is not None:
+            self._model.__exit__(None, None, None)
+            self._model = None
+        self._model_path = None
+        self._backend = None
+
+    def transcribe(self, pcm: np.ndarray, model_path: str, backend: str, *, keep_model: bool = True, **run_kwargs):
         with self._lock:
-            self._ensure_session(model_path, backend)
-            # Be explicit about the native default.  The file worker currently
-            # requests ``word`` for persisted timings, but that request is not
-            # valid for segment-only or timestamp-less models.
-            requested = run_kwargs.setdefault("timestamps", "auto")
-            run_kwargs["timestamps"] = _timestamp_request_for_model(
-                self._model, requested
-            )
             try:
-                return self._session.run(pcm, **run_kwargs)
-            except Exception as exc:
-                # Capabilities can be stale when the Python binding and native
-                # provider differ.  Retry once with the API's model-selected
-                # default, but never hide unrelated failures or loop forever.
-                if (
-                    run_kwargs["timestamps"] != "auto"
-                    and _is_unsupported_timestamps_error(exc)
-                ):
-                    retry_kwargs = dict(run_kwargs)
-                    retry_kwargs["timestamps"] = "auto"
-                    return self._session.run(pcm, **retry_kwargs)
-                raise
+                self._ensure_session(model_path, backend)
+                # Be explicit about the native default.  The file worker currently
+                # requests ``word`` for persisted timings, but that request is not
+                # valid for segment-only or timestamp-less models.
+                requested = run_kwargs.setdefault("timestamps", "auto")
+                run_kwargs["timestamps"] = _timestamp_request_for_model(
+                    self._model, requested
+                )
+                try:
+                    return self._session.run(pcm, **run_kwargs)
+                except Exception as exc:
+                    # Capabilities can be stale when the Python binding and native
+                    # provider differ.  Retry once with the API's model-selected
+                    # default, but never hide unrelated failures or loop forever.
+                    if (
+                        run_kwargs["timestamps"] != "auto"
+                        and _is_unsupported_timestamps_error(exc)
+                    ):
+                        retry_kwargs = dict(run_kwargs)
+                        retry_kwargs["timestamps"] = "auto"
+                        return self._session.run(pcm, **retry_kwargs)
+                    raise
+            finally:
+                # Result is fully materialized before run() returns. Releasing the
+                # native session here drops decoder/KV workspaces without losing
+                # the warm model. File transcription can additionally opt out of
+                # retaining the model itself because it is a one-shot workflow.
+                self._close_session()
+                if not keep_model:
+                    self._close_model()
 
     def warm_up(self, model_path: str | None, backend: str) -> bool:
         """Load the model and session ahead of the first real utterance.
@@ -212,6 +238,7 @@ class TranscriptionService:
         try:
             with self._lock:
                 self._ensure_session(model_path, backend)
+                self._close_session()
             return True
         except Exception:
             return False
@@ -223,14 +250,7 @@ class TranscriptionService:
             return str(getattr(self._model, "backend", "unknown"))
 
     def close(self):
-        if self._session is not None:
-            self._session.__exit__(None, None, None)
-            self._session = None
-        if self._model is not None:
-            self._model.__exit__(None, None, None)
-            self._model = None
-        self._model_path = None
-        self._backend = None
+        self._close_model()
 
 
 service = TranscriptionService()
@@ -243,6 +263,8 @@ class StreamingTranscriptionService:
     the final transcript. ``service`` remains available for the separate file
     transcription workflow. ``transcribe.cpp`` 0.x allows one active stream
     per model, so this class serializes all stream mutations behind one lock.
+    The model stays warm between utterances, while completed streams and
+    sessions are released so their decoder workspaces do not accumulate.
     """
 
     def __init__(self):
@@ -253,8 +275,16 @@ class StreamingTranscriptionService:
         self._model_path = None
         self._backend = None
 
+    def _close_session(self):
+        if self._session is not None:
+            self._session.__exit__(None, None, None)
+            self._session = None
+
     def _ensure_session(self, model_path: str, backend: str):
-        if self._session is not None and self._model_path == model_path and self._backend == backend:
+        if self._model is not None and self._model_path == model_path and self._backend == backend:
+            if self._session is None:
+                self._session = self._model.session()
+                self._session.__enter__()
             return
         self.close()
         import transcribe_cpp
@@ -272,6 +302,9 @@ class StreamingTranscriptionService:
         try:
             with self._lock:
                 self._ensure_session(model_path, backend)
+                # Warm the model, not a long-lived decoder workspace. The next
+                # press recreates the small session on the already-loaded model.
+                self._close_session()
             return True
         except Exception:
             return False
@@ -295,26 +328,33 @@ class StreamingTranscriptionService:
     def finalize(self, trailing_silence_ms: int = 240) -> str:
         with self._lock:
             if self._stream is None:
+                self._close_session()
                 return ""
-            # A short tail lets the streaming decoder commit the final word
-            # without waiting for the user to hold the hotkey after speaking.
-            # This is the only intentional post-release audio padding in the
-            # one-model push-to-talk path.
-            if trailing_silence_ms > 0:
-                self._stream.feed(
-                    np.zeros(int(16_000 * trailing_silence_ms / 1000), dtype=np.float32)
-                )
-            self._stream.finalize()
-            text = self._stream.text().display.strip()
-            self._stream.__exit__(None, None, None)
-            self._stream = None
-            return text
+            try:
+                # A short tail lets the streaming decoder commit the final word
+                # without waiting for the user to hold the hotkey after speaking.
+                # This is the only intentional post-release audio padding in the
+                # one-model push-to-talk path.
+                if trailing_silence_ms > 0:
+                    self._stream.feed(
+                        np.zeros(int(16_000 * trailing_silence_ms / 1000), dtype=np.float32)
+                    )
+                self._stream.finalize()
+                return self._stream.text().display.strip()
+            finally:
+                if self._stream is not None:
+                    self._stream.__exit__(None, None, None)
+                    self._stream = None
+                self._close_session()
 
     def reset(self):
         with self._lock:
-            if self._stream is not None:
-                self._stream.reset()
+            try:
+                if self._stream is not None:
+                    self._stream.reset()
+            finally:
                 self._stream = None
+                self._close_session()
 
     def backend_name(self) -> str:
         with self._lock:
@@ -326,9 +366,7 @@ class StreamingTranscriptionService:
         if self._stream is not None:
             self._stream.__exit__(None, None, None)
             self._stream = None
-        if self._session is not None:
-            self._session.__exit__(None, None, None)
-            self._session = None
+        self._close_session()
         if self._model is not None:
             self._model.__exit__(None, None, None)
             self._model = None
