@@ -955,7 +955,11 @@ class InsightsPanel(QWidget):
         scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         content = QWidget()
-        content.setMaximumWidth(1200)
+        # Keep the page fluid when the window enters macOS full screen. A
+        # fixed 1200 px cap leaves the rest of the full-screen viewport
+        # showing the scroll area's dark backing, which looks like a black
+        # border around Chatter. The cards already provide their own spacing,
+        # so letting the page fill the viewport is both safer and cleaner.
         content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         body = QVBoxLayout(content)
         body.setContentsMargins(0, 0, 0, 4)
@@ -2004,7 +2008,8 @@ class MainWindow(QMainWindow):
 
     def _build_history_tab(self) -> QWidget:
         content = QWidget()
-        content.setMaximumWidth(1200)
+        # This page must expand with the window; otherwise full-screen mode
+        # shows a centered 1200 px island with a dark surround.
         content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         v = QVBoxLayout(content)
         v.setContentsMargins(20, 16, 20, 16)
@@ -2475,7 +2480,6 @@ class MainWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
-        content.setMaximumWidth(1200)
         content.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         scroll.setWidget(content)
         return scroll

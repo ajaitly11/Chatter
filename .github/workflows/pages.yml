@@ -31,6 +31,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: main
+      - name: Sync canonical Chatter mascot
+        run: cp assets/chatter-mascot.svg docs/assets/chatter-mascot.svg
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

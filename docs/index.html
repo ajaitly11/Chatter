@@ -3,346 +3,751 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="Chatter is local macOS dictation with a live notch HUD, optional cleanup, and no cloud account.">
-  <meta name="theme-color" content="#17100d">
-  <title>Chatter | Local dictation for Mac</title>
+  <meta name="description" content="Chatter is local, unlimited voice-to-text for your Mac. Built for yapping. The more you talk, the better it gets you.">
+  <meta name="theme-color" content="#f7f6f2">
+  <link rel="icon" href="assets/chatter-mascot.svg" type="image/svg+xml">
+  <title>Chatter, built for yapping</title>
   <style>
     :root {
-      --bg: #17100d;
-      --bg-deep: #0d0907;
-      --panel: #211612;
-      --panel-raised: #2b1d17;
-      --panel-soft: rgba(255, 240, 229, .055);
-      --line: rgba(248, 238, 232, .14);
-      --line-strong: rgba(241, 132, 59, .38);
-      --text: #f8eee8;
-      --muted: #b9aaa3;
-      --quiet: #806e66;
-      --accent: #f1843b;
-      --accent-light: #ffad70;
-      --accent-dark: #c85609;
-      --green: #a8c47c;
+      --paper: #f7f6f2;
+      --paper-deep: #ece9e1;
+      --surface: #ffffff;
+      --ink: #171614;
+      --muted: #6c6861;
+      --quiet: #9a958c;
+      --line: rgba(23, 22, 20, .14);
+      --line-soft: rgba(23, 22, 20, .08);
+      --orange: #ef7d35;
+      --orange-deep: #b8531b;
+      --orange-soft: #f9e4d4;
+      --green: #829974;
+      --green-deep: #314433;
+      --black: #090908;
+      --max: 1240px;
+      --sans: "Helvetica Neue", "Avenir Next", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --display: "Iowan Old Style", "Baskerville", "Times New Roman", serif;
     }
 
     * { box-sizing: border-box; }
     html { scroll-behavior: smooth; }
     body {
       margin: 0;
-      color: var(--text);
-      background:
-        radial-gradient(circle at 82% -10%, rgba(241, 132, 59, .19), transparent 30rem),
-        radial-gradient(circle at 4% 28%, rgba(128, 70, 43, .16), transparent 26rem),
-        var(--bg);
-      font: 16px/1.55 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow-x: hidden;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: var(--sans);
       -webkit-font-smoothing: antialiased;
     }
-    body:before {
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      opacity: .055;
-      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='.38'/%3E%3C/svg%3E");
-      mix-blend-mode: soft-light;
-    }
     a { color: inherit; }
-    .wrap { width: min(1160px, calc(100% - 48px)); margin: 0 auto; }
+    button { font: inherit; }
+    img { display: block; max-width: 100%; }
+    .wrap { width: min(var(--max), calc(100% - 72px)); margin: 0 auto; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+    .scroll-progress { position: fixed; top: 0; left: 0; z-index: 50; width: 0; height: 3px; background: var(--orange); box-shadow: 0 0 18px rgba(239, 125, 53, .28); }
+    :where(a, button):focus-visible { outline: 3px solid var(--orange); outline-offset: 4px; }
 
-    nav {
+    .site-nav {
+      position: sticky;
+      top: 0;
+      z-index: 40;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 24px;
-      padding: 22px 0;
+      min-height: 78px;
+      border-bottom: 1px solid transparent;
+      background: rgba(247, 246, 242, .82);
+      backdrop-filter: blur(18px);
+      transition: border-color .25s ease;
     }
-    .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); text-decoration: none; font-weight: 800; letter-spacing: -.04em; }
-    .brand-mark { width: 34px; height: 34px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 11px; background: #000; box-shadow: 0 8px 24px rgba(0,0,0,.22); }
-    .brand-mark svg { width: 22px; height: 25px; overflow: visible; }
-    .brand-mark .body, .mascot .body { fill: var(--accent); }
-    .brand-mark .ear, .mascot .ear { fill: var(--accent-dark); }
-    .brand-mark .face, .mascot .face { fill: none; stroke: #321c12; stroke-linecap: round; stroke-width: 3; }
-    .nav-right { display: flex; align-items: center; gap: 26px; }
-    .nav-links { display: flex; align-items: center; gap: 24px; color: var(--muted); font-size: 14px; }
-    .nav-links a { text-decoration: none; transition: color .18s ease; }
-    .nav-links a:hover { color: var(--text); }
-    .nav-download { display: inline-flex; align-items: center; gap: 8px; padding: 9px 13px; border: 1px solid var(--line); border-radius: 999px; color: var(--text); text-decoration: none; font-size: 13px; font-weight: 750; transition: border-color .18s ease, background .18s ease, transform .18s ease; }
-    .nav-download:hover { border-color: var(--line-strong); background: var(--accent-soft); transform: translateY(-1px); }
-    .nav-download span { color: var(--accent-light); }
+    .site-nav.scrolled { border-color: var(--line); }
+    .brand { display: inline-flex; align-items: center; gap: 11px; color: var(--ink); text-decoration: none; font-size: 16px; font-weight: 800; letter-spacing: -.045em; }
+    .brand-mark { display: grid; place-items: center; width: 35px; height: 35px; overflow: hidden; border: 1px solid rgba(23, 22, 20, .14); border-radius: 12px; background: var(--black); }
+    .brand-mark img { width: 27px; height: 30px; object-fit: contain; }
+    .nav-actions { display: flex; align-items: center; gap: 28px; }
+    .nav-links { display: flex; gap: 28px; color: var(--muted); font-size: 14px; }
+    .nav-links a { text-decoration: none; transition: color .2s ease; }
+    .nav-links a:hover { color: var(--ink); }
+    .nav-download { display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 0 18px; border: 1px solid var(--ink); border-radius: 999px; color: var(--surface); background: var(--ink); text-decoration: none; font-size: 13px; font-weight: 800; transition: transform .2s ease, background .2s ease; }
+    .nav-download:hover { transform: translateY(-2px); background: var(--orange-deep); }
+    .nav-download svg { width: 14px; height: 14px; }
 
-    .hero { display: grid; grid-template-columns: .92fr 1.08fr; gap: 74px; align-items: center; padding: 92px 0 90px; }
-    .kicker { display: inline-flex; align-items: center; gap: 9px; color: var(--accent-light); font-size: 12px; font-weight: 800; letter-spacing: .13em; text-transform: uppercase; }
-    .kicker .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 5px rgba(241,132,59,.12); }
-    h1, h2, h3, p { margin-top: 0; }
-    h1 { max-width: 650px; margin-bottom: 24px; font-size: clamp(54px, 8vw, 92px); line-height: .92; letter-spacing: -.082em; }
-    h1 em { color: var(--accent-light); font-style: normal; }
-    .hero-copy > p { max-width: 540px; margin-bottom: 0; color: var(--muted); font-size: 19px; line-height: 1.5; }
-    .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 31px; }
-    .button { position: relative; display: inline-flex; align-items: center; justify-content: center; min-height: 50px; overflow: hidden; padding: 0 19px; border-radius: 14px; text-decoration: none; font-weight: 800; transition: transform .18s ease, border-color .18s ease, background .18s ease; }
-    .button:after { content: ""; position: absolute; inset: 0; transform: translateX(-120%); background: linear-gradient(100deg, transparent 25%, rgba(255,255,255,.27), transparent 75%); transition: transform .55s ease; }
-    .button:hover { transform: translateY(-2px); }
-    .button:hover:after { transform: translateX(120%); }
-    .button.primary { color: #28150d; background: var(--accent); box-shadow: 0 12px 30px rgba(241,132,59,.16); }
-    .button.primary:hover { background: var(--accent-light); }
-    .button.secondary { color: var(--text); border: 1px solid var(--line); background: var(--panel-raised); }
-    .button.secondary:hover { border-color: var(--line-strong); background: #38251d; }
-    .hero-note { display: flex; align-items: center; gap: 10px; margin: 23px 0 0; color: var(--quiet); font-size: 13px; }
-    .hero-note .mini-mascot { width: 25px; height: 25px; display: grid; place-items: center; border-radius: 8px; background: #000; }
-    .hero-note svg { width: 16px; height: 18px; overflow: visible; }
-    .release-note { margin: 10px 0 0 35px; color: var(--quiet); font-size: 11px; letter-spacing: .02em; }
+    .hero { min-height: calc(100svh - 78px); display: grid; align-items: center; gap: 26px; padding: 30px 0 52px; }
+    .hero-lede { max-width: 680px; margin: 0 auto; text-align: center; }
+    .hero-lede h1 { margin: 0; font-family: var(--display); font-weight: 500; font-size: clamp(46px, 7.4vw, 96px); line-height: .92; letter-spacing: -.06em; }
+    .hero-stage { position: relative; }
+    .hero-stage::before { content: ""; position: absolute; top: 4%; left: 50%; width: 55%; height: 76%; transform: translateX(-50%); border-radius: 50%; background: rgba(239, 125, 53, .13); filter: blur(95px); pointer-events: none; }
+    .mac-window { position: relative; z-index: 1; overflow: hidden; border: 1px solid rgba(23, 22, 20, .2); border-radius: 28px; background: var(--paper-deep); box-shadow: 0 38px 100px rgba(52, 44, 34, .17), 0 8px 20px rgba(52, 44, 34, .08); }
+    .mac-toolbar { display: flex; align-items: center; height: 45px; padding: 0 17px; border-bottom: 1px solid rgba(23, 22, 20, .11); background: rgba(255, 255, 255, .54); }
+    .traffic { width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: #f0b45e; }
+    .traffic:nth-child(1) { background: #ed7760; }
+    .traffic:nth-child(3) { background: #8bad7b; }
+    .toolbar-title { margin: 0 auto; color: #847d71; font-size: 10px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }
+    .desktop-surface { position: relative; min-height: min(72svh, 710px); overflow: hidden; background: linear-gradient(143deg, #f0ece4 0%, #e4ded4 100%); }
+    .desktop-surface::after { content: ""; position: absolute; right: -10%; bottom: -38%; width: 59%; height: 83%; border-radius: 50%; background: rgba(239, 125, 53, .12); filter: blur(62px); pointer-events: none; }
+    .physical-notch { position: absolute; z-index: 4; top: 0; left: 50%; width: 142px; height: 20px; transform: translateX(-50%); border-radius: 0 0 12px 12px; background: var(--black); }
 
-    .hero-visual { position: relative; min-height: 430px; display: grid; place-items: center; }
-    .hero-visual .halo { position: absolute; width: 360px; height: 290px; border-radius: 50%; background: rgba(241,132,59,.16); filter: blur(62px); }
-    .screen { position: relative; width: min(100%, 570px); min-height: 372px; padding: 13px; border: 1px solid var(--line); border-radius: 24px; background: linear-gradient(145deg, #2b211c, #0c0908); box-shadow: 0 34px 90px rgba(0,0,0,.43), inset 0 1px rgba(255,255,255,.06); transform: rotate(1deg); }
-    .screen-top { display: flex; align-items: center; gap: 6px; height: 20px; padding: 0 6px 8px; }
-    .traffic { width: 8px; height: 8px; border-radius: 50%; background: #775047; }
-    .traffic:first-child { background: #e77558; }
-    .traffic:nth-child(2) { background: #d3a157; }
-    .traffic:nth-child(3) { background: #91ae69; }
-    .screen-label { margin-left: auto; color: var(--quiet); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-    .screen-body { position: relative; min-height: 320px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); border-radius: 15px; background: linear-gradient(150deg, #241914, #130e0c); }
-    .screen-body:after { content: ""; position: absolute; right: 12%; bottom: -25%; width: 48%; height: 72%; border-radius: 50%; background: rgba(241,132,59,.09); filter: blur(34px); }
-    .notch { position: absolute; z-index: 2; top: 0; left: 50%; width: 350px; min-height: 92px; padding: 23px 22px 18px; display: flex; align-items: center; gap: 14px; transform: translateX(-50%); border-radius: 0 0 24px 24px; background: #000; box-shadow: 0 18px 40px rgba(0,0,0,.4); }
-    .notch:before { content: ""; position: absolute; top: 0; left: 50%; width: 150px; height: 15px; transform: translateX(-50%); border-radius: 0 0 10px 10px; background: #000; }
-    .mascot { flex: 0 0 42px; width: 42px; }
-    .mascot svg { display: block; width: 100%; height: auto; overflow: visible; }
-    .notch-copy small { display: block; color: #9e918a; font-size: 11px; }
-    .notch-copy strong { display: block; margin-top: 2px; color: #f8eee8; font-size: 16px; letter-spacing: -.02em; }
-    .wave { display: flex; align-items: center; gap: 4px; height: 24px; margin-left: auto; }
-    .wave i { width: 3px; border-radius: 99px; background: var(--accent); animation: pulse 1.1s ease-in-out infinite alternate; }
-    .wave i:nth-child(1) { height: 9px; animation-delay: -.4s; }
-    .wave i:nth-child(2) { height: 18px; animation-delay: -.2s; }
-    .wave i:nth-child(3) { height: 13px; animation-delay: -.7s; }
-    .wave i:nth-child(4) { height: 22px; animation-delay: -.1s; }
-    .wave i:nth-child(5) { height: 11px; animation-delay: -.5s; }
-    @keyframes pulse { to { transform: scaleY(.52); opacity: .54; } }
-    .screen-lines { position: absolute; top: 130px; left: 35px; right: 35px; display: grid; gap: 16px; opacity: .8; }
-    .screen-line { height: 8px; border-radius: 99px; background: #50372c; }
-    .screen-line.short { width: 58%; }
-    .screen-line.tiny { width: 34%; }
-    .transcript-card { position: absolute; z-index: 1; right: 30px; bottom: 26px; width: 270px; padding: 16px; border: 1px solid rgba(241,132,59,.32); border-radius: 15px; background: rgba(43,29,23,.84); box-shadow: 0 14px 36px rgba(0,0,0,.24); backdrop-filter: blur(14px); }
-    .transcript-card .caption { color: var(--accent-light); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
-    .transcript-card p { margin: 8px 0 0; color: var(--text); font-size: 14px; line-height: 1.45; }
-    .cursor { display: inline-block; width: 2px; height: 14px; margin-left: 2px; vertical-align: -2px; background: var(--accent); animation: blink 1s steps(2, jump-none) infinite; }
+    /* The HUD rests flush over the physical notch at the notch's own size,
+       then grows in width AND height from that exact spot — it never
+       starts as a constant-width bar that just unsquishes. This mirrors
+       the real app's Overlay geometry (chatter/overlay.py): the panel
+       starts at the screen's actual notch width/height and animates to
+       the full HUD size, with the top edge always flush/square against
+       the casing and only the bottom corners rounded. */
+    .notch {
+      position: absolute;
+      z-index: 8;
+      top: 0;
+      left: 50%;
+      display: grid;
+      grid-template-columns: 47px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 17px;
+      width: 142px;
+      min-height: 20px;
+      padding: 0 25px;
+      overflow: hidden;
+      transform: translateX(-50%);
+      border-radius: 0 0 12px 12px;
+      color: white;
+      background: var(--black);
+      box-shadow: none;
+      transition: width .5s cubic-bezier(.22, 1, .36, 1), min-height .5s cubic-bezier(.22, 1, .36, 1), padding .5s cubic-bezier(.22, 1, .36, 1), border-radius .5s cubic-bezier(.22, 1, .36, 1), box-shadow .5s ease;
+    }
+    .notch.is-open { width: min(670px, calc(100% - 54px)); min-height: 116px; padding: 29px 25px 17px; border-radius: 0 0 28px 28px; box-shadow: 0 22px 44px rgba(0, 0, 0, .24); }
+    .mascot { width: 47px; height: 51px; opacity: .97; transform: scale(.9); transition: transform .38s cubic-bezier(.22, 1, .36, 1); }
+    .listening .mascot { transform: scale(1.07) rotate(-2deg); }
+    .finishing .mascot { transform: scale(1) rotate(2deg); }
+    .done .mascot { transform: scale(1.02); }
+    .mascot img { width: 100%; height: 100%; object-fit: contain; }
+    .notch-status { display: block; color: rgba(255, 255, 255, .52); font-size: 10px; white-space: nowrap; }
+    .notch-transcript { display: block; min-width: 0; margin-top: 6px; color: #fff; font-size: 17px; font-weight: 700; line-height: 1.3; }
+    .notch-transcript .word { display: inline-block; margin-right: .24em; }
+    .notch-wave { display: flex; align-items: center; gap: 4px; height: 26px; opacity: .18; transition: opacity .3s ease; }
+    .listening .notch-wave { opacity: 1; }
+    .notch-wave i { width: 3px; border-radius: 99px; background: var(--orange); animation: wave 1s ease-in-out infinite alternate; }
+    .notch-wave i:nth-child(1) { height: 9px; animation-delay: -.42s; }
+    .notch-wave i:nth-child(2) { height: 20px; animation-delay: -.18s; }
+    .notch-wave i:nth-child(3) { height: 13px; animation-delay: -.66s; }
+    .notch-wave i:nth-child(4) { height: 24px; animation-delay: -.08s; }
+    .notch-wave i:nth-child(5) { height: 10px; animation-delay: -.5s; }
+    @keyframes wave { to { transform: scaleY(.48); opacity: .55; } }
+
+    /* One card frame behind the notch, four apps crossfading inside it —
+       the notch stays put while the app underneath changes, which is the
+       actual point being demonstrated. */
+    .app-mock { position: absolute; z-index: 2; right: clamp(30px, 9vw, 140px); bottom: clamp(29px, 6vw, 67px); left: clamp(30px, 9vw, 140px); min-height: min(415px, 59%); overflow: hidden; border: 1px solid rgba(23, 22, 20, .14); border-radius: 18px; box-shadow: 0 27px 59px rgba(73, 58, 42, .12); }
+    .scene { position: absolute; inset: 0; display: flex; flex-direction: column; background: var(--surface); opacity: 0; pointer-events: none; transition: opacity .5s ease; }
+    .scene.is-active { opacity: 1; pointer-events: auto; }
+    .app-toolbar { display: flex; align-items: center; gap: 12px; justify-content: space-between; height: 45px; padding: 0 19px; border-bottom: 1px solid rgba(23, 22, 20, .1); color: #81796e; font-size: 11px; flex: 0 0 auto; }
+    .app-name { display: flex; align-items: center; gap: 8px; color: var(--ink); font-weight: 800; }
+    .app-name::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--orange); box-shadow: 0 0 0 4px var(--orange-soft); }
+    .app-action { color: var(--quiet); }
+    .paste-placeholder { color: var(--quiet); }
+    .target-caret { display: inline-block; width: 1px; height: 15px; margin-left: 2px; vertical-align: -3px; background: var(--orange); animation: blink 1s steps(2, jump-none) infinite; }
     @keyframes blink { 50% { opacity: 0; } }
-    .float-chip { position: absolute; z-index: 3; display: inline-flex; align-items: center; gap: 7px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 999px; background: rgba(33,22,18,.86); color: var(--muted); font-size: 11px; box-shadow: 0 12px 30px rgba(0,0,0,.22); backdrop-filter: blur(12px); }
-    .float-chip strong { color: var(--text); font-weight: 750; }
-    .float-chip.one { top: 28px; right: -2px; }
-    .float-chip.two { bottom: 30px; left: -4px; }
-    .float-chip .chip-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
 
-    .signal-row { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
-    .signal-row article { padding: 22px 24px 23px 0; }
-    .signal-row article + article { padding-left: 26px; border-left: 1px solid var(--line); }
-    .signal-row strong { display: block; margin-bottom: 3px; color: var(--text); font-size: 14px; letter-spacing: -.015em; }
-    .signal-row span { color: var(--muted); font-size: 13px; }
+    /* Notes: a to-do list filling in as it's spoken. */
+    .notes-body { flex: 1; padding: clamp(22px, 4vw, 38px); overflow: hidden; }
+    .notes-heading { margin: 0 0 20px; color: var(--ink); font-family: var(--display); font-size: clamp(26px, 3.4vw, 38px); font-weight: 500; letter-spacing: -.04em; }
+    .todo-list { display: grid; gap: 14px; margin: 0; padding: 0; list-style: none; }
+    .todo-item { display: flex; align-items: flex-start; gap: 12px; color: var(--ink); font-size: clamp(14px, 1.6vw, 17px); line-height: 1.4; opacity: 0; transform: translateY(6px); animation: todoIn .45s cubic-bezier(.22, 1, .36, 1) forwards; }
+    .todo-check { flex: 0 0 auto; width: 18px; height: 18px; margin-top: 2px; border: 1.5px solid rgba(23, 22, 20, .22); border-radius: 5px; }
+    @keyframes todoIn { to { opacity: 1; transform: none; } }
 
-    section { padding: 122px 0 0; }
-    .section-head { display: flex; align-items: end; justify-content: space-between; gap: 38px; }
-    .eyebrow { margin-bottom: 13px; color: var(--accent); font-size: 11px; font-weight: 800; letter-spacing: .15em; text-transform: uppercase; }
-    h2 { max-width: 650px; margin-bottom: 15px; font-size: clamp(34px, 5vw, 54px); line-height: .98; letter-spacing: -.065em; }
-    .section-head p { max-width: 390px; margin: 0; color: var(--muted); font-size: 15px; }
+    /* Chrome (Gmail): composing a reply. */
+    .browser-toolbar { justify-content: flex-start; }
+    .browser-url { padding: 4px 11px; border-radius: 99px; background: var(--paper-deep); color: var(--quiet); font-size: 10px; }
+    .compose-card { flex: 1; padding: clamp(18px, 3vw, 28px) clamp(20px, 4vw, 32px); overflow: hidden; }
+    .compose-meta { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+    .compose-meta span { flex: 0 0 54px; color: var(--quiet); font-weight: 700; }
+    .compose-body { min-height: 90px; margin-top: 18px; color: var(--ink); font-size: clamp(13px, 1.5vw, 15px); line-height: 1.55; }
 
-    .steps { position: relative; display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 38px; }
-    .steps:before { content: ""; position: absolute; top: 40px; left: 42px; right: 42px; height: 1px; background: linear-gradient(90deg, var(--accent-dark), rgba(241,132,59,.18)); }
-    .step { position: relative; min-height: 235px; padding: 25px; border: 1px solid var(--line); border-radius: 19px; background: linear-gradient(145deg, rgba(255,255,255,.06), rgba(255,255,255,.018)); transition: transform .22s ease, border-color .22s ease, background .22s ease; }
-    .step:hover { transform: translateY(-5px); border-color: var(--line-strong); background: linear-gradient(145deg, rgba(241,132,59,.12), rgba(255,255,255,.025)); }
-    .step-index { position: relative; z-index: 1; display: grid; place-items: center; width: 31px; height: 31px; margin-bottom: 54px; border: 1px solid var(--line-strong); border-radius: 50%; background: var(--panel); color: var(--accent-light); font-size: 12px; font-weight: 800; }
-    .step h3 { margin-bottom: 8px; font-size: 19px; letter-spacing: -.035em; }
-    .step p { margin: 0; color: var(--muted); font-size: 14px; }
+    /* ChatGPT and Claude: a prompt filling up the message box. */
+    .chat-stage { flex: 1; display: grid; place-items: center; padding: 20px; text-align: center; font-family: var(--display); font-size: clamp(18px, 2.4vw, 24px); }
+    .chat-pill { flex: 0 0 auto; margin: 16px clamp(16px, 3vw, 28px) clamp(18px, 3vw, 26px); padding: 14px 18px; border-radius: 20px; font-size: clamp(13px, 1.5vw, 15px); line-height: 1.4; }
+    .scene-chatgpt { background: #101010; color: #e9e9e7; }
+    .scene-chatgpt .app-toolbar { border-bottom-color: rgba(255, 255, 255, .08); color: #8f8f8c; }
+    .scene-chatgpt .app-name { color: #e9e9e7; }
+    .scene-chatgpt .app-name::before { background: #10a37f; box-shadow: 0 0 0 4px rgba(16, 163, 127, .18); }
+    .scene-chatgpt .chat-stage { color: #55554f; }
+    .scene-chatgpt .chat-pill { background: #1d1d1e; color: #e9e9e7; }
+    .scene-claude { background: #faf6f0; color: #3a2c22; }
+    .scene-claude .app-toolbar { color: #9c8d7e; }
+    .scene-claude .app-name { color: #3a2c22; }
+    .scene-claude .app-name::before { background: #c1552f; box-shadow: 0 0 0 4px rgba(193, 85, 47, .18); }
+    .scene-claude .chat-stage { color: #b7a898; }
+    .scene-claude .chat-pill { background: #fff; border: 1px solid rgba(58, 44, 34, .14); color: #3a2c22; }
+    .scene-generic { background: #fbf8f2; color: var(--ink); }
+    .scene-generic .chat-stage { color: #90877e; }
+    .scene-generic .chat-pill { background: #fff; border: 1px solid rgba(23, 22, 20, .12); color: var(--ink); }
+    .scene-slack { background: #f8f5fb; }
+    .scene-slack .app-name::before { background: #b46bd2; box-shadow: 0 0 0 4px rgba(180, 107, 210, .18); }
+    .scene-notion { background: #fff; }
+    .scene-notion .app-name::before { background: #171614; box-shadow: 0 0 0 4px rgba(23, 22, 20, .1); }
+    .scene-messages { background: #f3f7fb; }
+    .scene-messages .app-name::before { background: #55a9eb; box-shadow: 0 0 0 4px rgba(85, 169, 235, .18); }
+    .scene-terminal { background: #171817; color: #eef1e9; }
+    .scene-terminal .app-toolbar { border-bottom-color: rgba(255, 255, 255, .09); color: #8d958b; }
+    .scene-terminal .app-name { color: #eef1e9; }
+    .scene-terminal .app-name::before { background: #829974; box-shadow: 0 0 0 4px rgba(130, 153, 116, .18); }
+    .scene-terminal .chat-stage { color: #768274; font-family: JetBrains, monospace; font-size: clamp(15px, 2vw, 20px); }
+    .scene-terminal .chat-pill { background: #252925; color: #eef1e9; border-color: rgba(255, 255, 255, .1); }
 
-    .feature-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; margin-top: 38px; }
-    .feature { min-height: 210px; padding: 28px; border: 1px solid var(--line); border-radius: 20px; background: var(--panel-soft); }
-    .feature:nth-child(2) { background: linear-gradient(135deg, rgba(241,132,59,.14), rgba(255,255,255,.025)); }
-    .feature h3 { max-width: 330px; margin-bottom: 10px; font-size: 23px; line-height: 1.06; letter-spacing: -.045em; }
-    .feature p { max-width: 450px; margin: 0; color: var(--muted); font-size: 14px; }
-    .feature-tag { display: inline-flex; align-items: center; gap: 7px; margin-bottom: 45px; color: var(--accent-light); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
-    .feature-tag .bar { width: 18px; height: 2px; background: var(--accent); }
+    section { padding-top: clamp(145px, 18vw, 250px); }
+    section[id] { scroll-margin-top: 92px; }
+    .section-heading { max-width: 900px; margin: 15px 0 0; font-family: var(--display); font-size: clamp(60px, 8.8vw, 130px); font-weight: 500; line-height: .86; letter-spacing: -.075em; text-wrap: balance; }
+    .section-note { max-width: 370px; margin: 25px 0 0; color: var(--muted); font-size: 15px; line-height: 1.55; }
 
-    .model-section { display: grid; grid-template-columns: .9fr 1.1fr; gap: 72px; align-items: start; }
-    .model-section > div:first-child p { max-width: 470px; color: var(--muted); }
-    .model-link { display: inline-flex; align-items: center; gap: 8px; margin-top: 28px; color: var(--accent-light); font-size: 14px; font-weight: 750; text-decoration: none; }
-    .model-link:after { content: "↗"; transition: transform .18s ease; }
-    .model-link:hover:after { transform: translate(2px, -2px); }
-    .memory-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
-    .memory { min-height: 164px; padding: 20px; border: 1px solid var(--line); border-radius: 17px; background: var(--panel); }
-    .memory.recommended { border-color: var(--line-strong); background: linear-gradient(145deg, rgba(241,132,59,.15), var(--panel)); }
-    .memory strong { display: block; margin-bottom: 9px; color: var(--accent-light); font-size: 14px; }
-    .memory h3 { margin-bottom: 9px; font-size: 18px; letter-spacing: -.035em; }
-    .memory p { margin: 0; color: var(--muted); font-size: 13px; }
-    .memory-note { margin-top: 14px; color: var(--quiet); font-size: 12px; }
+    .story-intro { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .42fr); gap: 90px; align-items: end; }
+    .story-bridge { max-width: 390px; padding-bottom: 7px; color: var(--muted); font-family: var(--display); font-size: clamp(28px, 3.4vw, 48px); line-height: .98; letter-spacing: -.055em; }
+    .story-bridge-label { display: block; margin-bottom: 18px; color: var(--orange-deep); font-family: var(--sans); font-size: 10px; font-weight: 850; letter-spacing: .16em; text-transform: uppercase; }
 
-    .privacy { position: relative; display: grid; grid-template-columns: 86px 1fr auto; gap: 26px; align-items: center; overflow: hidden; padding: 30px 34px; border: 1px solid var(--line-strong); border-radius: 23px; background: linear-gradient(110deg, rgba(241,132,59,.14), rgba(255,255,255,.035)); }
-    .privacy:after { content: ""; position: absolute; right: -40px; bottom: -100px; width: 280px; height: 220px; border-radius: 50%; background: rgba(241,132,59,.14); filter: blur(30px); }
-    .privacy .mascot { position: relative; z-index: 1; width: 68px; }
-    .privacy h2 { margin-bottom: 7px; font-size: 30px; }
-    .privacy p { position: relative; z-index: 1; max-width: 580px; margin: 0; color: var(--muted); font-size: 14px; }
-    .privacy .local-stamp { position: relative; z-index: 1; white-space: nowrap; color: var(--green); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .chapter-flow { margin-top: 145px; padding: 93px 0 100px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); background: var(--paper); }
+    .flow-story { display: grid; grid-template-columns: .8fr 1.2fr; gap: 90px; align-items: center; }
+    .flow-story .section-heading { max-width: 650px; }
+    .flow-stage { position: relative; min-height: 300px; padding: 30px 31px; overflow: hidden; border: 1px solid var(--line); border-radius: 18px; background: var(--surface); box-shadow: 0 24px 55px rgba(44, 36, 26, .08); }
+    .flow-notch { display: grid; grid-template-columns: 35px 1fr auto; align-items: center; gap: 13px; min-height: 73px; padding: 15px 18px; border-radius: 0 0 17px 17px; background: var(--black); box-shadow: 0 17px 36px rgba(0, 0, 0, .18); }
+    .flow-notch img { width: 30px; height: 35px; object-fit: contain; }
+    .flow-notch small { display: block; color: rgba(255, 255, 255, .5); font-size: 9px; }
+    .flow-notch strong { display: block; margin-top: 4px; color: white; font-size: 15px; font-weight: 700; }
+    .flow-wave { display: flex; align-items: center; gap: 3px; height: 22px; }
+    .flow-wave i { display: block; width: 3px; border-radius: 99px; background: var(--orange); animation: wave 1s ease-in-out infinite alternate; }
+    .flow-wave i:nth-child(1) { height: 7px; animation-delay: -.42s; }
+    .flow-wave i:nth-child(2) { height: 17px; animation-delay: -.18s; }
+    .flow-wave i:nth-child(3) { height: 11px; animation-delay: -.66s; }
+    .flow-wave i:nth-child(4) { height: 20px; animation-delay: -.08s; }
+    .flow-wave i:nth-child(5) { height: 9px; animation-delay: -.5s; }
+    .flow-caption { position: absolute; right: 31px; bottom: 31px; left: 31px; max-width: 430px; color: var(--muted); font-family: var(--display); font-size: 30px; line-height: .98; letter-spacing: -.05em; }
 
-    .cta { display: grid; grid-template-columns: 1fr auto; gap: 34px; align-items: center; margin: 122px 0 88px; padding: 36px 38px; border: 1px solid var(--line); border-radius: 24px; background: var(--panel); }
-    .cta h2 { margin-bottom: 0; font-size: clamp(32px, 4vw, 48px); }
-    .cta p { max-width: 460px; margin: 7px 0 0; color: var(--muted); font-size: 14px; }
-    footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 24px 0 42px; border-top: 1px solid var(--line); color: var(--quiet); font-size: 13px; }
+    .privacy-story { display: grid; grid-template-columns: .9fr 1.1fr; gap: 100px; align-items: center; }
+    .privacy-list { border-top: 1px solid var(--line); }
+    .privacy-item { display: grid; grid-template-columns: 1fr auto; gap: 25px; align-items: baseline; padding: 20px 0; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 15px; opacity: 0; transform: translateX(-14px); transition: opacity .45s ease, transform .55s cubic-bezier(.22, 1, .36, 1); }
+    .privacy-list.is-visible .privacy-item { opacity: 1; transform: none; }
+    .privacy-list.is-visible .privacy-item:nth-child(2) { transition-delay: .08s; }
+    .privacy-list.is-visible .privacy-item:nth-child(3) { transition-delay: .16s; }
+    .privacy-list.is-visible .privacy-item:nth-child(4) { transition-delay: .24s; }
+    .privacy-item b { color: var(--green-deep); font-size: 12px; font-weight: 800; }
+    .privacy-item b::before { content: ""; display: inline-block; width: 7px; height: 7px; margin-right: 9px; border-radius: 50%; background: var(--green); }
+
+    .learning-story { display: grid; grid-template-columns: .86fr 1.14fr; gap: 100px; align-items: center; }
+    .learning-card { padding: 30px; border: 1px solid var(--line); background: var(--surface); box-shadow: 0 25px 50px rgba(44, 36, 26, .06); }
+    .learning-header { display: flex; justify-content: space-between; padding-bottom: 18px; border-bottom: 1px solid var(--line); color: var(--quiet); font-size: 10px; font-weight: 850; letter-spacing: .13em; text-transform: uppercase; }
+    .learning-header strong { color: var(--green-deep); }
+    .edit-pair { display: grid; gap: 12px; margin: 31px 0; }
+    .edit-line { display: flex; align-items: center; gap: 12px; min-height: 42px; padding: 0 14px; color: var(--muted); background: var(--paper); font-family: var(--display); font-size: 21px; letter-spacing: -.035em; }
+    .edit-line.old { text-decoration: line-through; text-decoration-color: rgba(184, 83, 27, .55); }
+    .edit-line.new { color: var(--ink); background: var(--orange-soft); }
+    .edit-line svg { flex: 0 0 auto; width: 16px; height: 16px; color: var(--orange-deep); }
+    .dictionary-memory { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
+    .dictionary-memory img { width: 27px; height: 30px; padding: 4px; border-radius: 8px; background: var(--black); }
+    .learning-card .section-note { max-width: none; margin: 16px 0 0; padding-left: 37px; font-size: 12px; }
+    .dictionary-memory strong { color: var(--ink); font-weight: 750; }
+
+    .insights-story { display: grid; grid-template-columns: .78fr 1.22fr; gap: 100px; align-items: start; }
+    .insight-board { overflow: hidden; border: 1px solid var(--line); color: var(--ink); background: var(--surface); box-shadow: 0 26px 55px rgba(35, 27, 19, .08); }
+    .insight-toolbar { display: flex; justify-content: space-between; padding: 18px 22px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+    .insight-toolbar b { color: var(--green-deep); }
+    .insight-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 18px 23px 0; }
+    .insight-card { min-height: 84px; padding: 13px 14px 11px; border: 1px solid rgba(42, 27, 22, .12); border-radius: 10px; background: #fffaf4; }
+    .insight-card span { display: block; font-size: 9px; font-weight: 850; letter-spacing: .12em; }
+    .insight-card b { display: block; margin-top: 11px; color: #2A1B16; font-family: var(--display); font-size: 30px; font-weight: 500; line-height: .8; letter-spacing: -.06em; }
+    .insight-card.orange span { color: #EB7C33; }
+    .insight-card.amber span { color: #DB940E; }
+    .insight-card.gold span { color: #BEA333; }
+    .insight-content { display: grid; grid-template-columns: .85fr 1.15fr; gap: 30px; padding: 26px 23px 28px; }
+    .insight-metric { padding-right: 24px; border-right: 1px solid var(--line); }
+    .insight-kicker { display: block; margin-bottom: 12px; color: #EB7C33; font-size: 10px; font-weight: 850; letter-spacing: .12em; }
+    .metric-number { display: block; font-family: var(--display); font-size: clamp(55px, 7vw, 88px); line-height: .84; letter-spacing: -.07em; }
+    .metric-label { display: block; margin-top: 12px; color: var(--muted); font-size: 11px; }
+    .metric-note { margin-top: 36px; color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .metric-mini-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 26px; }
+    .metric-mini-grid div { padding-top: 11px; border-top: 1px solid var(--line); }
+    .metric-mini-grid b { display: block; color: var(--ink); font-family: var(--display); font-size: 24px; font-weight: 500; letter-spacing: -.04em; }
+    .metric-mini-grid span { display: block; margin-top: 4px; color: var(--muted); font-size: 9px; }
+    .insight-graph { display: flex; align-items: end; gap: 10px; height: 175px; padding: 0 0 25px; border-bottom: 1px solid var(--line); }
+    .bar { display: block; flex: 1; width: 100%; height: var(--bar-height); transform: scaleY(0); transform-origin: bottom; border-radius: 5px 5px 0 0; background: var(--orange); transition: transform .9s cubic-bezier(.22, 1, .36, 1); }
+    .bar:nth-child(2), .bar:nth-child(5) { background: #DB940E; }
+    .bar:nth-child(3), .bar:nth-child(6) { background: #BEA333; }
+    .insight-board.is-visible .bar { transform: scaleY(1); }
+    .graph-labels { display: flex; justify-content: space-between; margin-top: 9px; color: var(--quiet); font-size: 9px; }
+    .insight-calendar { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 24px; }
+    .calendar-cell { aspect-ratio: 1; border-radius: 4px; background: var(--paper-deep); }
+    .calendar-cell:nth-child(3n) { background: rgba(235, 124, 51, .66); }
+    .calendar-cell:nth-child(5n) { background: rgba(190, 163, 51, .72); }
+    .calendar-cell:nth-child(7n) { background: rgba(219, 148, 14, .3); }
+
+    .final { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 50px; margin: clamp(90px, 10vw, 140px) 0 80px; padding: 42px 0 0; border-top: 1px solid var(--ink); }
+    .final h2 { max-width: 740px; margin: 14px 0 0; font-family: var(--display); font-size: clamp(67px, 11vw, 160px); font-weight: 500; line-height: .83; letter-spacing: -.085em; }
+    .final p { max-width: 320px; margin: 24px 0 0; color: var(--muted); font-size: 15px; line-height: 1.5; }
+    .button { display: inline-flex; align-items: center; justify-content: center; gap: 10px; min-height: 50px; padding: 0 19px; border-radius: 11px; text-decoration: none; font-size: 12px; font-weight: 850; white-space: nowrap; transition: transform .2s ease, background .2s ease; }
+    .button.primary { color: var(--surface); background: var(--ink); box-shadow: 0 12px 25px rgba(23, 22, 20, .13); }
+    .button.primary:hover { transform: translateY(-3px); background: var(--orange-deep); }
+    .button svg { width: 15px; height: 15px; }
+    footer { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 24px 0 42px; border-top: 1px solid var(--line); color: var(--quiet); font-size: 11px; }
     footer a { color: var(--muted); text-decoration: none; }
-    footer a:hover { color: var(--text); }
+    footer a:hover { color: var(--ink); }
 
-    @media (max-width: 840px) {
-      .wrap { width: min(100% - 32px, 640px); }
-      .nav-links a:not(:last-child) { display: none; }
-      .hero, .model-section { grid-template-columns: 1fr; gap: 46px; padding-top: 60px; }
-      .hero-visual { min-height: 390px; }
-      .signal-row, .steps, .feature-grid { grid-template-columns: 1fr; }
-      .signal-row article, .signal-row article + article { padding: 17px 0; border-left: 0; }
-      .signal-row article + article { border-top: 1px solid var(--line); }
-      .steps:before { display: none; }
-      .step { min-height: 0; }
-      .step-index { margin-bottom: 28px; }
-      .memory-grid { grid-template-columns: 1fr; }
-      .memory { min-height: auto; }
-      .privacy { grid-template-columns: 60px 1fr; }
-      .privacy .local-stamp { grid-column: 2; }
-      .cta { grid-template-columns: 1fr; margin-top: 80px; padding: 28px; }
+    [data-reveal] { opacity: 0; transform: translateY(26px); }
+    [data-reveal].is-visible { opacity: 1; transform: none; }
+
+    @media (max-width: 900px) {
+      .wrap { width: min(100% - 42px, 680px); }
+      .nav-links a:first-child { display: none; }
+      .nav-actions { gap: 14px; }
+      .hero { min-height: calc(100svh - 70px); padding-top: 20px; }
+      .mac-window { border-radius: 22px; }
+      .desktop-surface { min-height: 590px; }
+      .notch { gap: 12px; }
+      .notch.is-open { width: calc(100% - 36px); min-height: 100px; padding: 24px 17px 14px; }
+      .mascot { width: 39px; height: 43px; }
+      .notch-transcript { font-size: 13px; }
+      .app-mock { right: 19px; bottom: 22px; left: 19px; min-height: 365px; }
+      .story-intro, .flow-story, .privacy-story, .learning-story, .insights-story { grid-template-columns: 1fr; gap: 36px; }
+      .flow-story, .privacy-story, .learning-story, .insights-story { gap: 50px; }
+      .chapter-flow { margin-top: 100px; }
+      .section-heading { font-size: clamp(62px, 11vw, 94px); }
+      .insight-content { grid-template-columns: 1fr; }
+      .insight-metric { padding-right: 0; padding-bottom: 25px; border-right: 0; border-bottom: 1px solid var(--line); }
+      .insight-summary { grid-template-columns: 1fr; }
+      .metric-note { margin-top: 28px; }
+      .final { grid-template-columns: 1fr; gap: 28px; }
+      .final .button { justify-self: start; }
+    }
+    @media (max-width: 560px) {
+      .wrap { width: min(100% - 30px, 520px); }
+      .site-nav { min-height: 70px; }
+      .nav-download { min-height: 38px; padding: 0 12px; }
+      .hero { padding-bottom: 31px; }
+      .desktop-surface { min-height: 500px; }
+      .physical-notch { width: 118px; height: 16px; }
+      .notch { width: 118px; min-height: 16px; }
+      .notch.is-open { width: calc(100% - 20px); min-height: 88px; padding: 20px 11px 11px; border-radius: 0 0 19px 19px; }
+      .mascot { width: 32px; height: 36px; }
+      .notch-status { font-size: 8px; }
+      .notch-transcript { font-size: 11px; }
+      .notch-wave { gap: 3px; }
+      .app-mock { right: 10px; bottom: 15px; left: 10px; min-height: 323px; }
+      .app-toolbar { padding: 0 13px; }
+      .section-heading { font-size: 60px; }
+      .chapter-flow { padding: 66px 0 75px; }
+      .flow-stage { min-height: 280px; padding: 20px; }
+      .flow-caption { right: 20px; bottom: 22px; left: 20px; font-size: 24px; }
+      .learning-card { padding: 22px; }
+      .edit-line { font-size: 17px; }
+      .insight-content { padding: 22px 17px 24px; }
+      .insight-graph { min-height: 145px; }
+      .final { margin-top: 86px; padding-top: 30px; }
+      .final h2 { font-size: 77px; }
       footer { display: block; }
       footer span { display: block; margin-top: 8px; }
     }
-    @media (max-width: 560px) {
-      nav { padding-top: 16px; }
-      .nav-right { gap: 10px; }
-      .nav-download { padding: 8px 10px; }
-      h1 { font-size: clamp(50px, 16vw, 72px); }
-      .hero-visual { min-height: 340px; }
-      .screen { min-height: 310px; transform: none; }
-      .screen-body { min-height: 258px; }
-      .notch { width: 82%; min-height: 76px; padding: 18px 15px 14px; }
-      .mascot { flex-basis: 34px; width: 34px; }
-      .notch-copy strong { font-size: 13px; }
-      .wave { display: none; }
-      .screen-lines { top: 112px; left: 22px; right: 22px; }
-      .transcript-card { right: 16px; bottom: 16px; width: 75%; }
-      .float-chip { font-size: 10px; }
-      .float-chip.one { top: 6px; right: 0; }
-      .float-chip.two { bottom: 7px; left: 0; }
-      .privacy { grid-template-columns: 1fr; }
-      .privacy .local-stamp { grid-column: auto; }
-    }
     @media (prefers-reduced-motion: reduce) {
       html { scroll-behavior: auto; }
-      *, *:before, *:after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
     }
   </style>
 </head>
 <body>
+  <div class="scroll-progress" id="scroll-progress" aria-hidden="true"></div>
   <div class="wrap">
-    <nav aria-label="Main navigation">
-      <a class="brand" href=".">
-        <span class="brand-mark"><svg viewBox="0 0 100 110" aria-hidden="true"><path class="ear" d="M29 33c-9-8-9-20 0-23 9 4 12 12 10 23zM71 33c9-8 9-20 0-23-9 4-12 12-10 23z"/><path class="body" d="M18 70c0-18 12-25 32-25s32 7 32 25c0 22-13 32-32 32S18 92 18 70z"/><path class="face" d="M39 74h.1M61 74h.1M39 84c7 7 15 7 22 0"/></svg></span>
-        <span>Chatter</span>
-      </a>
-      <div class="nav-right">
-        <div class="nav-links">
-          <a href="#how-it-works">How it works</a>
-          <a href="#models">Models</a>
-          <a href="https://github.com/ajaitly11/Chatter">GitHub</a>
-        </div>
-        <a class="nav-download" href="https://github.com/ajaitly11/Chatter/releases/download/v1.0.6/Chatter-macOS-arm64.dmg"><span>↓</span> Download</a>
+    <nav class="site-nav" aria-label="Main navigation">
+      <a class="brand" href="."><span class="brand-mark"><img src="assets/chatter-mascot.svg" alt=""></span><span>Chatter</span></a>
+      <div class="nav-actions">
+        <div class="nav-links"><a href="#features">Product</a><a href="https://github.com/ajaitly11/Chatter">GitHub</a></div>
+        <a class="nav-download" href="https://github.com/ajaitly11/Chatter/releases/download/v1.0.6/Chatter-macOS-arm64.dmg"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2v8m0 0 3-3m-3 3L5 7M3 13.5h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Download</a>
       </div>
     </nav>
 
     <main>
-      <section class="hero">
-        <div class="hero-copy">
-          <div class="kicker"><span class="dot"></span> Local dictation for macOS</div>
-          <h1>Say it once.<br><em>Keep moving.</em></h1>
-          <p>Chatter turns a keypress into words in the app you are already using. Talk to your Mac, watch the notch follow along, and keep your train of thought.</p>
-          <div class="actions">
-            <a class="button primary" href="https://github.com/ajaitly11/Chatter/releases/download/v1.0.6/Chatter-macOS-arm64.dmg">Download for Apple Silicon</a>
-            <a class="button secondary" href="#how-it-works">See how it works</a>
-          </div>
-          <p class="hero-note"><span class="mini-mascot"><svg viewBox="0 0 100 110" aria-hidden="true"><path class="ear" d="M29 33c-9-8-9-20 0-23 9 4 12 12 10 23zM71 33c9-8 9-20 0-23-9 4-12 12-10 23z"/><path class="body" d="M18 70c0-18 12-25 32-25s32 7 32 25c0 22-13 32-32 32S18 92 18 70z"/><path class="face" d="M39 74h.1M61 74h.1M39 84c7 7 15 7 22 0"/></svg></span> No account. No cloud transcription. Just your Mac.</p>
-          <p class="release-note">Chatter v1.0.6 · macOS arm64</p>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-lede" data-reveal>
+          <h1 id="hero-title">Built for yapping.</h1>
         </div>
-
-        <div class="hero-visual" aria-label="A preview of Chatter listening in the Mac notch">
-          <div class="halo"></div>
-          <div class="float-chip one"><span class="chip-dot"></span><strong>Listening locally</strong></div>
-          <div class="float-chip two"><span class="chip-dot"></span>words keep arriving</div>
-          <div class="screen">
-            <div class="screen-top"><span class="traffic"></span><span class="traffic"></span><span class="traffic"></span><span class="screen-label">Chatter is ready</span></div>
-            <div class="screen-body">
-              <div class="notch">
-                <div class="mascot"><svg viewBox="0 0 100 110" aria-hidden="true"><path class="ear" d="M29 33c-9-8-9-20 0-23 9 4 12 12 10 23zM71 33c9-8 9-20 0-23-9 4-12 12-10 23z"/><path class="body" d="M18 70c0-18 12-25 32-25s32 7 32 25c0 22-13 32-32 32S18 92 18 70z"/><path class="face" d="M39 74h.1M61 74h.1M39 84c7 7 15 7 22 0"/></svg></div>
-                <div class="notch-copy"><small>Listening locally</small><strong>Tell me what you are thinking.</strong></div>
-                <div class="wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="hero-stage">
+          <div class="mac-window" id="demo-window" role="img" aria-label="Chatter running on top of Notes, Gmail, ChatGPT, Claude, Slack, Notion, Messages, and Terminal">
+            <div class="mac-toolbar"><span class="traffic"></span><span class="traffic"></span><span class="traffic"></span><span class="toolbar-title" id="toolbar-title" aria-hidden="true"></span></div>
+            <div class="desktop-surface">
+              <div class="physical-notch" aria-hidden="true"></div>
+              <div class="notch" id="notch" aria-live="polite">
+                <div class="mascot"><img src="assets/chatter-mascot.svg" alt=""></div>
+                <div><span class="notch-status" id="notch-status">Ready to listen</span><span class="notch-transcript" id="notch-transcript"></span></div>
+                <div class="notch-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
               </div>
-              <div class="screen-lines" aria-hidden="true"><span class="screen-line"></span><span class="screen-line short"></span><span class="screen-line"></span><span class="screen-line tiny"></span></div>
-              <div class="transcript-card"><div class="caption">Live preview</div><p>I can keep talking while the words appear here<span class="cursor"></span></p></div>
+
+              <div class="app-mock" id="app-mock" aria-hidden="true">
+                <div class="scene scene-notes" data-scene="notes">
+                  <div class="app-toolbar"><span class="app-name">Notes</span><span class="app-action">Today</span></div>
+                  <div class="notes-body">
+                    <h2 class="notes-heading">To-do</h2>
+                    <ul class="todo-list" data-typed></ul>
+                  </div>
+                </div>
+                <div class="scene scene-browser" data-scene="browser">
+                  <div class="app-toolbar browser-toolbar"><span class="app-name">Gmail</span><span class="browser-url">mail.google.com</span></div>
+                  <div class="compose-card">
+                    <div class="compose-meta"><span>To</span>sam@northwind.studio</div>
+                    <div class="compose-meta"><span>Subject</span>Re: proposal</div>
+                    <div class="compose-body" data-typed><span class="paste-placeholder">Your words will land here</span></div>
+                  </div>
+                </div>
+                <div class="scene scene-chatgpt" data-scene="chatgpt">
+                  <div class="app-toolbar"><span class="app-name">ChatGPT</span></div>
+                  <div class="chat-stage">Ask anything</div>
+                  <div class="chat-pill" data-typed><span class="paste-placeholder">Your words will land here</span></div>
+                </div>
+                <div class="scene scene-claude" data-scene="claude">
+                  <div class="app-toolbar"><span class="app-name">Claude</span></div>
+                  <div class="chat-stage">How can I help today?</div>
+                  <div class="chat-pill" data-typed><span class="paste-placeholder">Your words will land here</span></div>
+                </div>
+                <div class="scene scene-generic scene-slack" data-scene="slack">
+                  <div class="app-toolbar"><span class="app-name">Slack</span><span class="app-action"># launch</span></div>
+                  <div class="chat-stage">Share an update with the team</div>
+                  <div class="chat-pill" data-typed><span class="paste-placeholder">Your words will land here</span></div>
+                </div>
+                <div class="scene scene-generic scene-notion" data-scene="notion">
+                  <div class="app-toolbar"><span class="app-name">Notion</span><span class="app-action">Project notes</span></div>
+                  <div class="chat-stage">A blank page, ready for the thought</div>
+                  <div class="chat-pill" data-typed><span class="paste-placeholder">Your words will land here</span></div>
+                </div>
+                <div class="scene scene-generic scene-messages" data-scene="messages">
+                  <div class="app-toolbar"><span class="app-name">Messages</span><span class="app-action">New message</span></div>
+                  <div class="chat-stage">Send a quick reply</div>
+                  <div class="chat-pill" data-typed><span class="paste-placeholder">Your words will land here</span></div>
+                </div>
+                <div class="scene scene-generic scene-terminal" data-scene="terminal">
+                  <div class="app-toolbar"><span class="app-name">Terminal</span><span class="app-action">zsh</span></div>
+                  <div class="chat-stage">$ chatter --ready</div>
+                  <div class="chat-pill" data-typed><span class="paste-placeholder">Your words will land here</span></div>
+                </div>
+              </div>
             </div>
+        </div>
+      </section>
+
+      <section class="story-intro" id="why">
+        <div data-reveal><h2 class="section-heading">No weekly<br>word limits.</h2></div>
+        <div class="story-bridge" data-reveal><span class="story-bridge-label">Unlimited, for real</span>Talk as much as you want. No limits, no meter running, no upsell wall.</div>
+      </section>
+
+      <section class="chapter-flow" id="features">
+        <div class="wrap flow-story">
+          <div data-reveal><h2 class="section-heading">Double-tap.<br>Talk.<br>Done.</h2></div>
+          <div class="flow-stage" data-reveal>
+            <div class="flow-notch"><img src="assets/chatter-mascot.svg" alt=""><div><small>Listening locally</small><strong>send the note today</strong></div><div class="flow-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div></div>
+            <div class="flow-caption">Lands wherever you're already typing. No copy-paste, no app-switching.</div>
           </div>
         </div>
       </section>
 
-      <div class="signal-row" aria-label="Chatter highlights">
-        <article><strong>One live speech path</strong><span>Nemotron 3.5 streams from the first syllable.</span></article>
-        <article><strong>Optional polish</strong><span>A small local model can tidy the final text.</span></article>
-        <article><strong>Nothing leaves your Mac</strong><span>Audio, text, and history stay on device.</span></article>
-      </div>
-
-      <section id="how-it-works">
-        <div class="section-head">
-          <div><div class="eyebrow">The everyday flow</div><h2>Three small moments. No app switching.</h2></div>
-          <p>Chatter is built to get out of the way. The feedback is there when you need it and quiet when you do not.</p>
-        </div>
-        <div class="steps">
-          <article class="step"><div class="step-index">01</div><h3>Press and speak</h3><p>Hold your chosen key anywhere on the Mac. The sound and notch HUD respond immediately.</p></article>
-          <article class="step"><div class="step-index">02</div><h3>See the words arrive</h3><p>The live preview follows your newest words while the focused app stays right where you left it.</p></article>
-          <article class="step"><div class="step-index">03</div><h3>Release and continue</h3><p>Chatter finishes the transcript, applies optional cleanup, and pastes it into the active app.</p></article>
+      <section class="privacy-story">
+        <div data-reveal><h2 class="section-heading">It stays<br>on your Mac.</h2></div>
+        <div class="privacy-list" data-reveal>
+          <div class="privacy-item"><span>Microphone audio</span><b>stays here</b></div>
+          <div class="privacy-item"><span>Transcription and cleanup</span><b>stays here</b></div>
+          <div class="privacy-item"><span>History and insights</span><b>stays here</b></div>
+          <div class="privacy-item"><span>How much you can talk</span><b>unlimited</b></div>
         </div>
       </section>
 
-      <section>
-        <div class="section-head">
-          <div><div class="eyebrow">Two jobs, clearly separated</div><h2>Fast when you are talking. Careful when you are exporting.</h2></div>
-          <p>Live dictation and file transcription have different needs, so Chatter gives each one the model slot and controls it deserves.</p>
+      <section class="learning-story">
+        <div class="learning-card" data-reveal>
+          <div class="learning-header"><span>Personal dictionary</span><strong>Learning</strong></div>
+          <div class="edit-pair"><div class="edit-line old"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m3 3 10 10M13 3 3 13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>hi, my name is ashlyn</div><div class="edit-line new"><svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="m3 8 3.2 3L13 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>Hi, my name is Ashlynn.</div></div>
+          <div class="dictionary-memory"><img src="assets/chatter-mascot.svg" alt="Chatty"><span><strong>Chatty saved "Ashlynn" to your dictionary</strong></span></div>
+          <p class="section-note">Say it again. Next time, Chatty spells it right on the first try. No fixing required.</p>
         </div>
-        <div class="feature-grid">
-          <article class="feature"><div class="feature-tag"><span class="bar"></span> Live dictation</div><h3>Keep your first words moving.</h3><p>Nemotron 3.5 streaming handles the live path from audio capture through the raw transcript. The optional cleanup model is not a second speech recognizer.</p></article>
-          <article class="feature"><div class="feature-tag"><span class="bar"></span> Transcribed files</div><h3>Bring the longer things home.</h3><p>Drop in audio or video, choose the timing format you need, and export plain text or subtitles. Parakeet is a good starting point for word-level timing.</p></article>
-          <article class="feature"><div class="feature-tag"><span class="bar"></span> Personal vocabulary</div><h3>Teach it the words you use.</h3><p>Keep names, jargon, and corrected word boundaries in a local dictionary. It is personalization you can see and edit.</p></article>
-          <article class="feature"><div class="feature-tag"><span class="bar"></span> A calmer Mac app</div><h3>Useful details, in their place.</h3><p>History, insights, model choices, and advanced settings are available without crowding the moment you are trying to write.</p></article>
-        </div>
+        <div data-reveal><h2 class="section-heading">The more you talk,<br>the more Chatty gets you.</h2><p class="section-note">The first time it mishears a name or a piece of jargon, correct it once. Chatty remembers it for good.</p></div>
       </section>
 
-      <section id="models" class="model-section">
-        <div>
-          <div class="eyebrow">Start with the sensible setup</div>
-          <h2>Your Mac does not need a model catalog.</h2>
-          <p>Choose the model for the job, then let Chatter keep the rest out of your way. The short guide explains the trade-offs by unified memory and links to the downloads.</p>
-          <a class="model-link" href="model-guide.md">Read the three-step model guide</a>
-        </div>
-        <div>
-          <div class="memory-grid">
-            <article class="memory"><strong>8 GB</strong><h3>Keep it lean</h3><p>Use Nemotron 3.5 for live dictation. Leave cleanup off until the raw path feels right.</p></article>
-            <article class="memory recommended"><strong>16 GB</strong><h3>Good starting point</h3><p>Nemotron plus a small 2B-4B cleanup model gives you room for punctuation and formatting.</p></article>
-            <article class="memory"><strong>24 GB+</strong><h3>Experiment carefully</h3><p>Try a larger cleanup model if you want, but keep an eye on the latency of your own workflow.</p></article>
+      <section class="insights-story">
+        <div data-reveal><h2 class="section-heading">Your voice,<br>by the numbers.</h2><p class="section-note">Streaks, words per minute, how much you've said this week. All local, all yours.</p></div>
+        <div class="insight-board" data-reveal>
+          <div class="insight-toolbar"><span>Chatter / insights</span><b>stored locally</b></div>
+          <div class="insight-summary">
+            <div class="insight-card orange"><span>DICTATIONS</span><b data-count="239">0</b></div>
+            <div class="insight-card amber"><span>WORDS TODAY</span><b data-count="2808">0</b></div>
+            <div class="insight-card gold"><span>WORDS LEARNED</span><b data-count="19">0</b></div>
           </div>
-          <p class="memory-note">Models are downloaded separately. Chatter does not bundle several gigabytes into the app.</p>
+          <div class="insight-content">
+            <div class="insight-metric"><span class="insight-kicker">WORDS DICTATED</span><span class="metric-number" data-count="5301">0</span><span class="metric-label">words spoken this month</span><div class="metric-mini-grid"><div><b data-count="3180">0</b><span>today</span></div><div><b data-count="15">0</b><span>words learned</span></div><div><b>133</b><span>WPM</span></div></div><p class="metric-note">Your rhythm and progress, kept on this Mac.</p></div>
+            <div><div class="insight-graph" aria-label="Words spoken across six recent sessions"><i class="bar" style="--bar-height:36%"></i><i class="bar" style="--bar-height:52%"></i><i class="bar" style="--bar-height:29%"></i><i class="bar" style="--bar-height:68%"></i><i class="bar" style="--bar-height:47%"></i><i class="bar" style="--bar-height:84%"></i></div><div class="graph-labels"><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Today</span></div><div class="insight-calendar" aria-hidden="true"> <i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i><i class="calendar-cell"></i></div></div>
+          </div>
         </div>
       </section>
 
-      <section>
-        <div class="privacy">
-          <div class="mascot"><svg viewBox="0 0 100 110" aria-hidden="true"><path class="ear" d="M29 33c-9-8-9-20 0-23 9 4 12 12 10 23zM71 33c9-8 9-20 0-23-9 4-12 12-10 23z"/><path class="body" d="M18 70c0-18 12-25 32-25s32 7 32 25c0 22-13 32-32 32S18 92 18 70z"/><path class="face" d="M39 74h.1M61 74h.1M39 84c7 7 15 7 22 0"/></svg></div>
-          <div><div class="eyebrow">The promise</div><h2>Your voice stays yours.</h2><p>Chatter is designed around local processing. Your microphone audio, transcripts, cleanup prompts, dictionary, and usage history stay on this Mac. There is no account to create.</p></div>
-          <div class="local-stamp">On-device by default</div>
-        </div>
-      </section>
-
-      <section class="cta">
-        <div><div class="eyebrow">Ready when you are</div><h2>Give your hands a break.</h2><p>Download Chatter for Apple Silicon and try one short dictation before you change anything else.</p></div>
-        <a class="button primary" href="https://github.com/ajaitly11/Chatter/releases/download/v1.0.6/Chatter-macOS-arm64.dmg">Download Chatter</a>
+      <section class="final" data-reveal>
+        <div><h2>Go yap.</h2><p>Free forever. No weekly limits. Nothing leaves your Mac.</p></div>
+        <a class="button primary" href="https://github.com/ajaitly11/Chatter/releases/download/v1.0.6/Chatter-macOS-arm64.dmg">Get Chatter for Mac <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 8h9m-3-3 3 3-3 3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg></a>
       </section>
     </main>
 
     <footer><span>Chatter is a local-first macOS project by <a href="https://github.com/ajaitly11">ajaitly11</a>.</span><span><a href="https://github.com/ajaitly11/Chatter/releases">Releases</a> &nbsp;·&nbsp; <a href="https://github.com/ajaitly11/Chatter">Source code</a></span></footer>
   </div>
+
+  <script type="module">
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const nav = document.querySelector('.site-nav');
+    const progress = document.querySelector('#scroll-progress');
+    const notch = document.querySelector('#notch');
+    const notchStatus = document.querySelector('#notch-status');
+    const notchTranscript = document.querySelector('#notch-transcript');
+    const toolbarTitle = document.querySelector('#toolbar-title');
+    const sceneEls = {};
+    document.querySelectorAll('.scene').forEach(el => { sceneEls[el.dataset.scene] = el; });
+    let pretext;
+    let motion;
+    let sessionId = 0;
+    let lastTranscript = notchTranscript?.textContent || '';
+
+    const setChrome = () => {
+      nav?.classList.toggle('scrolled', window.scrollY > 10);
+      const maximum = document.documentElement.scrollHeight - window.innerHeight;
+      if (progress) progress.style.width = `${maximum > 0 ? (window.scrollY / maximum) * 100 : 0}%`;
+    };
+    setChrome();
+    window.addEventListener('scroll', setChrome, { passive: true });
+
+    const animateCounter = element => {
+      const target = Number(element.dataset.count);
+      if (!Number.isFinite(target)) return;
+      if (reduceMotion) {
+        element.textContent = target.toLocaleString();
+        return;
+      }
+      const started = performance.now();
+      const tick = now => {
+        const progress = Math.min(1, (now - started) / 950);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        element.textContent = Math.round(target * eased).toLocaleString();
+        if (progress < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    };
+
+    const layoutText = (element, text, maxWidth, font = '700 17px "Helvetica Neue", sans-serif', lineHeight = 22) => {
+      if (!pretext || !element || maxWidth <= 0) return;
+      const prepared = pretext.prepare(text, font);
+      const result = pretext.layout(prepared, maxWidth, lineHeight);
+      element.style.minHeight = `${Math.max(lineHeight, result.height)}px`;
+    };
+
+    const appendTranscript = (text, animatedWords = []) => {
+      text.split(/(\s+)/).forEach((part, index) => {
+        if (!part) return;
+        if (part.trim()) {
+          const span = document.createElement('span');
+          span.className = 'word';
+          span.style.setProperty('--word-index', index);
+          span.textContent = part;
+          notchTranscript.append(span);
+          animatedWords.push(span);
+        } else {
+          notchTranscript.append(document.createTextNode(part));
+        }
+      });
+    };
+
+    const setTranscript = text => {
+      const animatedWords = [];
+      if (text.startsWith(lastTranscript) && text.length >= lastTranscript.length) {
+        appendTranscript(text.slice(lastTranscript.length), animatedWords);
+      } else {
+        notchTranscript.replaceChildren();
+        appendTranscript(text);
+      }
+      lastTranscript = text;
+      requestAnimationFrame(() => layoutText(notchTranscript, text, notchTranscript.clientWidth));
+      if (motion && !reduceMotion && animatedWords.length) {
+        motion.animate(animatedWords, { opacity: [0, 1], y: [4, 0] }, { duration: .22, delay: motion.stagger(.025), easing: [.22, 1, .36, 1] });
+      }
+    };
+
+    const setNotch = (state, status, text) => {
+      const wasOpen = notch.classList.contains('is-open');
+      notch.className = `notch ${state}${wasOpen ? ' is-open' : ''}`;
+      notchStatus.textContent = status;
+      setTranscript(text);
+      if (!wasOpen) requestAnimationFrame(() => notch.classList.add('is-open'));
+    };
+
+    // A quick tour through the places people already work. "notes" fills
+    // a to-do list item by item (split on the same commas/period that end
+    // each spoken clause); every other scene grows one block of text in
+    // its own message box. The notch above stays the single source of
+    // truth for what's "being said" — each scene just shows where it lands.
+    const scenes = [
+      {
+        key: 'notes', label: 'NOTES',
+        words: ['Call', 'the', 'dentist,', 'pick', 'up', 'dry', 'cleaning,', 'finish', 'the', 'deck', 'for', 'Monday.'],
+      },
+      {
+        key: 'browser', label: 'GMAIL',
+        words: ['Hey', 'team,', 'following', 'up', 'on', 'the', 'proposal,', 'can', 'we', 'sync', 'tomorrow', 'at', '10.'],
+      },
+      {
+        key: 'chatgpt', label: 'CHATGPT',
+        words: ['Write', 'me', 'a', 'two', 'week', 'workout', 'plan', 'for', 'someone', 'training', 'for', 'a', 'half', 'marathon.'],
+      },
+      {
+        key: 'claude', label: 'CLAUDE',
+        words: ['Can', 'you', 'research', 'the', 'best', 'noise', 'cancelling', 'headphones', 'under', 'three', 'hundred', 'dollars.'],
+      },
+      {
+        key: 'slack', label: 'SLACK',
+        words: ['Quick', 'update,', 'the', 'launch', 'cut', 'is', 'ready', 'for', 'review.'],
+      },
+      {
+        key: 'notion', label: 'NOTION',
+        words: ['Capture', 'the', 'idea', 'before', 'it', 'gets', 'away.'],
+      },
+      {
+        key: 'messages', label: 'MESSAGES',
+        words: ['Running', 'ten', 'minutes', 'late,', 'see', 'you', 'soon.'],
+      },
+      {
+        key: 'terminal', label: 'TERMINAL',
+        words: ['Ship', 'the', 'small', 'fix,', 'then', 'run', 'the', 'tests.'],
+      },
+    ];
+    let sceneCursor = 0;
+
+    const resetSceneTarget = scene => {
+      const target = sceneEls[scene.key].querySelector('[data-typed]');
+      target.replaceChildren();
+      if (scene.key !== 'notes') {
+        const empty = document.createElement('span');
+        empty.className = 'paste-placeholder';
+        empty.textContent = 'Your words will land here';
+        target.append(empty);
+      }
+      return target;
+    };
+
+    const typeIntoTarget = (target, text, complete) => {
+      target.replaceChildren();
+      if (text) target.append(document.createTextNode(text));
+      if (!complete) {
+        const caret = document.createElement('span');
+        caret.className = 'target-caret';
+        target.append(caret);
+      }
+      requestAnimationFrame(() => layoutText(target, text, target.clientWidth, '400 14px "Helvetica Neue", sans-serif', 20));
+    };
+
+    const addTodoItem = (list, text) => {
+      const li = document.createElement('li');
+      li.className = 'todo-item';
+      const check = document.createElement('span');
+      check.className = 'todo-check';
+      li.append(check, document.createTextNode(text));
+      list.append(li);
+    };
+
+    const wait = duration => new Promise(resolve => window.setTimeout(resolve, duration));
+
+    const playScene = async (active, scene) => {
+      Object.values(sceneEls).forEach(el => el.classList.toggle('is-active', el === sceneEls[scene.key]));
+      toolbarTitle.textContent = scene.label;
+      const isNotes = scene.key === 'notes';
+      const target = resetSceneTarget(scene);
+      const finalText = scene.words.join(' ');
+      setNotch('ready', 'Ready to listen', '');
+      if (reduceMotion) {
+        setNotch('done', 'Done', finalText);
+        if (isNotes) {
+          finalText.split(/,\s*/).forEach(part => addTodoItem(target, part.replace(/\.$/, '')));
+        } else {
+          typeIntoTarget(target, finalText, true);
+        }
+        await wait(1400);
+        return;
+      }
+      await wait(260);
+      if (active !== sessionId) return;
+      setNotch('listening', 'Listening locally', '');
+      let transcript = '';
+      let segment = '';
+      for (const word of scene.words) {
+        await wait(word.endsWith(',') ? 82 : 116);
+        if (active !== sessionId) return;
+        transcript = transcript ? `${transcript} ${word}` : word;
+        segment = segment ? `${segment} ${word}` : word;
+        setNotch('listening', 'Listening locally', transcript);
+        if (isNotes) {
+          if (/[,.]$/.test(word)) {
+            addTodoItem(target, segment.replace(/[,.]$/, ''));
+            segment = '';
+          }
+        } else {
+          typeIntoTarget(target, transcript, false);
+        }
+      }
+      setNotch('finishing', 'Finishing locally', transcript);
+      await wait(360);
+      if (active !== sessionId) return;
+      setNotch('done', 'Done', finalText);
+      if (!isNotes) typeIntoTarget(target, finalText, true);
+      await wait(1000);
+    };
+
+    const playLoop = async () => {
+      const active = ++sessionId;
+      while (active === sessionId) {
+        const scene = scenes[sceneCursor % scenes.length];
+        sceneCursor += 1;
+        await playScene(active, scene);
+        if (active !== sessionId) return;
+      }
+    };
+
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) sessionId += 1;
+      else playLoop();
+    });
+    window.addEventListener('resize', () => {
+      layoutText(notchTranscript, notchTranscript.textContent, notchTranscript.clientWidth);
+      const activeTarget = document.querySelector('.scene.is-active [data-typed]');
+      if (activeTarget && activeTarget.tagName !== 'UL') {
+        layoutText(activeTarget, activeTarget.textContent, activeTarget.clientWidth, '400 14px "Helvetica Neue", sans-serif', 20);
+      }
+    }, { passive: true });
+    playLoop();
+
+    try {
+      pretext = await import('https://cdn.jsdelivr.net/npm/@chenglou/pretext@0.0.8/+esm');
+      layoutText(notchTranscript, notchTranscript.textContent, notchTranscript.clientWidth);
+    } catch (error) {
+      console.info('Pretext enhancement unavailable; browser wrapping remains active.', error);
+    }
+
+    try {
+      motion = await import('https://cdn.jsdelivr.net/npm/motion@12/+esm');
+      const { animate, inView, stagger } = motion;
+      if (!reduceMotion) animate('#demo-window', { opacity: [0, 1], y: [22, 0], scale: [.985, 1] }, { duration: .9, easing: [.22, 1, .36, 1] });
+      document.querySelectorAll('[data-reveal]').forEach(item => inView(item, () => {
+        item.classList.add('is-visible');
+        if (!reduceMotion) animate(item, { opacity: [0, 1], y: [26, 0] }, { duration: .7, easing: [.22, 1, .36, 1] });
+      }, { amount: .15 }));
+      const privacyList = document.querySelector('.privacy-list');
+      if (privacyList) inView(privacyList, () => privacyList.classList.add('is-visible'), { amount: .3 });
+      const insightBoard = document.querySelector('.insight-board');
+      if (insightBoard) inView(insightBoard, () => {
+        insightBoard.classList.add('is-visible');
+        if (insightBoard.dataset.animated) return;
+        insightBoard.dataset.animated = 'true';
+        insightBoard.querySelectorAll('[data-count]').forEach(animateCounter);
+      }, { amount: .25 });
+      if (!reduceMotion) animate('.notch-wave i', { scaleY: [1, .48, 1] }, { duration: 1.05, repeat: Infinity, delay: stagger(.1), easing: 'ease-in-out' });
+    } catch (error) {
+      document.querySelectorAll('[data-reveal]').forEach(item => item.classList.add('is-visible'));
+      document.querySelector('.privacy-list')?.classList.add('is-visible');
+      document.querySelector('.insight-board')?.classList.add('is-visible');
+      document.querySelectorAll('.insight-board [data-count]').forEach(element => {
+        element.textContent = Number(element.dataset.count).toLocaleString();
+      });
+      console.info('Motion enhancement unavailable; CSS transitions remain active.', error);
+    }
+  </script>
 </body>
 </html>

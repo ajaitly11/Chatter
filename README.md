@@ -2,6 +2,8 @@
 
 Speak to your Mac without leaving the keyboard.
 
+<p align="center"><img src="assets/chatter-mascot.svg" width="88" alt="Chatter mascot"></p>
+
 [![Latest release](https://img.shields.io/github/v/release/ajaitly11/Chatter?display_name=tag&label=latest%20release&color=F1843B)](https://github.com/ajaitly11/Chatter/releases/latest)
 [![Package Chatter](https://github.com/ajaitly11/Chatter/actions/workflows/release.yml/badge.svg)](https://github.com/ajaitly11/Chatter/actions/workflows/release.yml)
 [![Website](https://img.shields.io/badge/website-Chatter-211612?labelColor=211612&color=F1843B)](https://ajaitly11.github.io/Chatter/)
