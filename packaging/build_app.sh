@@ -64,15 +64,12 @@ rm -rf "$APP_DIR"
 mv "$PROJECT_DIR/dist/Chatter.app" "$APP_DIR"
 
 # Models are intentionally not copied into the app: a release should not
-# bundle several gigabytes of GGUFs. A bundle-local symlink keeps the runtime
-# lookup stable for a local checkout; CI builds get an empty models folder and
-# can guide the user to download the recommended model after installation.
+# bundle several gigabytes of GGUFs. Keep an empty, signed directory in the
+# bundle for developer fallback; frozen builds use the writable per-user model
+# directory under Application Support. An absolute symlink to the checkout
+# would make strict macOS code-signature verification reject the bundle.
 mkdir -p "$APP_DIR/Contents/Resources"
-if [ -d "$PROJECT_DIR/models" ]; then
-    ln -s "$PROJECT_DIR/models" "$APP_DIR/Contents/Resources/models"
-else
-    mkdir -p "$APP_DIR/Contents/Resources/models"
-fi
+mkdir -p "$APP_DIR/Contents/Resources/models"
 
 PLIST="$APP_DIR/Contents/Info.plist"
 plutil -replace CFBundleName -string "Chatter" "$PLIST"

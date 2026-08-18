@@ -74,9 +74,19 @@ def _models_dir() -> Path:
     candidates.append(source_models)
 
     if getattr(sys, "frozen", False):
-        # The packaged app creates this as a symlink to the user's model
-        # directory. Keeping the large model files outside the bundle makes
-        # app upgrades small while preserving a portable app layout.
+        # Keep multi-gigabyte GGUFs outside the signed app bundle. This
+        # per-user directory is writable after an update, unlike
+        # ``/Applications/Chatter.app/Contents/Resources``. It also avoids
+        # absolute symlinks inside the bundle, which make strict macOS code
+        # signature verification fail.
+        user_models = Path.home() / "Library" / "Application Support" / "Chatter" / "models"
+        try:
+            user_models.mkdir(parents=True, exist_ok=True)
+            candidates.append(user_models)
+        except OSError:
+            pass
+        # Keep a bundle-local directory as a read-only fallback for a
+        # developer build that intentionally ships a model beside the app.
         candidates.append(Path(sys.executable).resolve().parents[1] / "Resources" / "models")
 
     candidates.append(Path.cwd() / "models")

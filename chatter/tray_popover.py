@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QCursor, QIcon
+from PyQt6.QtGui import QColor, QCursor, QIcon, QPainter, QPen
 from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -51,7 +51,12 @@ class TrayPopover(QFrame):
             | Qt.WindowType.Popup
             | Qt.WindowType.NoDropShadowWindowHint
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        # Paint one opaque rounded surface ourselves. The transparent pixels
+        # outside that shape are intentional: they prevent the rectangular
+        # native window backing from showing as black lines at the corners,
+        # while the filled surface stays fully readable over any app.
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, False)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setFixedWidth(310)
 
@@ -64,10 +69,9 @@ class TrayPopover(QFrame):
         self.setStyleSheet(
             f"""
             QFrame#chatterTrayPopover {{
-                background-color: {theme.SURFACE};
+                background: transparent;
                 color: {theme.TEXT};
-                border: 1px solid {theme.BORDER};
-                border-radius: 14px;
+                border: none;
             }}
             QLabel {{
                 background: transparent;
@@ -193,6 +197,15 @@ class TrayPopover(QFrame):
 
         self.adjustSize()
 
+    def paintEvent(self, event):
+        del event
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = self.rect().adjusted(0.5, 0.5, -0.5, -0.5)
+        painter.setBrush(QColor(theme.SURFACE))
+        painter.setPen(QPen(QColor(theme.BORDER), 1))
+        painter.drawRoundedRect(rect, 14, 14)
+
     @staticmethod
     def _rule() -> QFrame:
         rule = QFrame()
@@ -241,4 +254,3 @@ class TrayPopover(QFrame):
         self.raise_()
         self.activateWindow()
         self.setFocus()
-

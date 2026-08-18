@@ -101,6 +101,50 @@ MIN_WINDOW_H = 460
 CONTENT_H = 340  # each tab's list areas default to about this tall, but expand with the window
 
 
+def _dialog_style() -> str:
+    """Return the app stylesheet plus explicit opaque dialog surfaces."""
+    app = QApplication.instance()
+    base = app.styleSheet() if app is not None else ""
+    return base + f"""
+        QDialog, QMessageBox, QFileDialog {{
+            background-color: {theme.SURFACE};
+            color: {theme.TEXT};
+        }}
+        QDialog QLabel, QMessageBox QLabel, QFileDialog QLabel {{
+            color: {theme.TEXT};
+        }}
+        QDialog QPushButton, QMessageBox QPushButton, QFileDialog QPushButton {{
+            background-color: {theme.SURFACE2};
+            color: {theme.TEXT};
+            border: 1px solid {theme.BORDER};
+            border-radius: 8px;
+            padding: 7px 14px;
+        }}
+        QDialog QPushButton:hover, QMessageBox QPushButton:hover, QFileDialog QPushButton:hover {{
+            background-color: {theme.ACTIVE};
+            color: {theme.BG};
+            border-color: {theme.ACTIVE};
+        }}
+        QFileDialog QTreeView, QFileDialog QListView, QFileDialog QTableView {{
+            background-color: {theme.BG};
+            color: {theme.TEXT};
+            border: 1px solid {theme.BORDER};
+            alternate-background-color: {theme.SURFACE};
+        }}
+    """
+
+
+def _show_themed_message(parent, title: str, message: str, icon: QMessageBox.Icon):
+    """Show a readable Chatter-surface message instead of a system-styled box."""
+    box = QMessageBox(parent)
+    box.setWindowTitle(title)
+    box.setText(message)
+    box.setIcon(icon)
+    box.setStandardButtons(QMessageBox.StandardButton.Ok)
+    box.setStyleSheet(_dialog_style())
+    return box.exec()
+
+
 class AnimatedButton(_QtPushButton):
     """A normal Qt button with a restrained, visible click sheen.
 
@@ -588,7 +632,9 @@ class _ModelSlotPanel(QWidget):
             config.update(**{self.config_key: str(dest)})
         except Exception:
             logger.exception("model import failed")
-            QMessageBox.critical(self, "Import failed", traceback.format_exc())
+            _show_themed_message(
+                self, "Import failed", traceback.format_exc(), QMessageBox.Icon.Critical
+            )
             return
         self.refresh()
         if self.on_change:
@@ -1716,17 +1762,19 @@ class MainWindow(QMainWindow):
         word_rows = self._word_timestamps(entry)
         segment_rows = self._timed_rows(entry, "segments")
         if kind in {"word_srt", "word_vtt"} and not word_rows:
-            QMessageBox.information(
+            _show_themed_message(
                 self,
                 "Word timestamps unavailable",
                 "The selected file model returned phrase timestamps only. Choose a word-timestamp-capable model in Advanced settings to export word-level subtitles.",
+                QMessageBox.Icon.Information,
             )
             return
         if kind in {"phrase_srt", "phrase_vtt"} and not segment_rows:
-            QMessageBox.information(
+            _show_themed_message(
                 self,
                 "Timestamps unavailable",
                 "This transcription did not include timestamps, so a timestamped export is not available.",
+                QMessageBox.Icon.Information,
             )
             return
         extension = ".vtt" if kind.endswith("vtt") else ".srt" if kind.endswith("srt") else ".txt"
@@ -1738,9 +1786,22 @@ class MainWindow(QMainWindow):
             "phrase_srt": "SubRip subtitles (*.srt)",
             "phrase_vtt": "WebVTT subtitles (*.vtt)",
         }
-        path, _ = QFileDialog.getSaveFileName(
-            self, f"Export {kind.upper()} transcript", default_name, filters[kind]
-        )
+        # Avoid the native macOS save sheet here: it ignores the app palette
+        # and can appear as a translucent system surface over the transcript.
+        # The non-native Qt dialog remains a familiar file chooser while
+        # inheriting Chatter's opaque warm theme.
+        dialog = QFileDialog(self, f"Export {kind.upper()} transcript")
+        dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+        dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+        dialog.setNameFilter(filters[kind])
+        dialog.setDefaultSuffix(extension.lstrip("."))
+        dialog.selectFile(default_name)
+        dialog.setMinimumSize(660, 440)
+        dialog.setStyleSheet(_dialog_style())
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        selected = dialog.selectedFiles()
+        path = selected[0] if selected else ""
         if not path:
             return
         try:
@@ -1758,7 +1819,9 @@ class MainWindow(QMainWindow):
             logger.info("exported .%s to %s", kind, path)
         except Exception:
             logger.exception("history export failed")
-            QMessageBox.critical(self, "Export failed", traceback.format_exc())
+            _show_themed_message(
+                self, "Export failed", traceback.format_exc(), QMessageBox.Icon.Critical
+            )
 
     # --- drag & drop ---------------------------------------------------
 
@@ -2147,10 +2210,16 @@ class MainWindow(QMainWindow):
             self.dictation_list_layout.insertWidget(self.dictation_list_layout.count() - 1, self._dictation_row(entry))
 
     def _clear_dictation_history(self):
-        reply = QMessageBox.question(
-            self, "Clear history", "Delete all saved dictation history? This can't be undone.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        box = QMessageBox(self)
+        box.setWindowTitle("Clear history")
+        box.setText("Delete all saved dictation history? This can't be undone.")
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setStandardButtons(
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
+        box.setDefaultButton(QMessageBox.StandardButton.No)
+        box.setStyleSheet(_dialog_style())
+        reply = box.exec()
         if reply == QMessageBox.StandardButton.Yes:
             history.clear(kind="dictation")
             self._reload_dictation_history()
@@ -2668,6 +2737,13 @@ class MainWindow(QMainWindow):
             self._advanced_mtp_checkbox.setEnabled(checked)
         if checked:
             threading.Thread(target=self.formatter.warm_up, daemon=True).start()
+        else:
+            # The cleanup model is optional and can be roughly the same size
+            # as the live ASR model. Turning the feature off must reclaim its
+            # native server immediately instead of merely hiding the toggle.
+            # Formatter.shutdown() waits behind an in-flight request, so this
+            # remains safe while keeping the UI responsive.
+            threading.Thread(target=self.formatter.shutdown, daemon=True).start()
 
     def _on_mtp_toggled(self, checked: bool):
         config.update(llama_mtp_enabled=checked)
@@ -2839,4 +2915,6 @@ class MainWindow(QMainWindow):
         self.status_label.setText("Failed.")
         self.transcribe_btn.setEnabled(True)
         self.open_btn.setEnabled(True)
-        QMessageBox.critical(self, "Transcription failed", message)
+        _show_themed_message(
+            self, "Transcription failed", message, QMessageBox.Icon.Critical
+        )

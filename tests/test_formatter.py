@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 
 from chatter.formatter import (
+    Formatter,
     SYSTEM_PROMPT,
     clean_model_output,
     deterministic_cleanup,
@@ -15,6 +16,24 @@ from chatter.formatter import (
 
 
 class FormatterTests(unittest.TestCase):
+    def test_stale_server_match_is_strict(self):
+        model = "/tmp/chatter-cleanup.gguf"
+        command = (
+            "/opt/homebrew/bin/llama-server -m /tmp/chatter-cleanup.gguf "
+            "--port 8712 -ngl 999"
+        )
+        self.assertTrue(Formatter._matches_managed_server(command, 8712, model))
+        self.assertFalse(
+            Formatter._matches_managed_server(
+                command.replace("8712", "9999"), 8712, model
+            )
+        )
+        self.assertFalse(
+            Formatter._matches_managed_server(
+                command.replace(model, "/tmp/another-model.gguf"), 8712, model
+            )
+        )
+
     def test_cleanup_prompt_preserves_content_rules(self):
         self.assertIn("never summarize or invent", SYSTEM_PROMPT)
         self.assertIn("do not turn a pause into a full stop", SYSTEM_PROMPT)

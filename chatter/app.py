@@ -4,6 +4,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
+import AppKit
 from PyQt6.QtCore import QLockFile, QRectF, Qt, QTimer
 from PyQt6.QtGui import QAction, QActionGroup, QColor, QIcon, QKeySequence, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
@@ -121,6 +122,12 @@ def run():
     app.setWindowIcon(icon)
 
     formatter = Formatter()
+    # A previous build can leave the optional cleanup server behind if the
+    # GUI was force-quit or updated while formatting was enabled. Do this
+    # before the window is shown so a disabled cleanup setting really means
+    # only the streaming ASR model is resident.
+    if not config.load().get("formatting_enabled", True):
+        Formatter.reap_stale_server()
     window = MainWindow(formatter)
     update_checker = UpdateChecker(window)
     app.setApplicationVersion(update_checker.current_version)
@@ -308,8 +315,33 @@ def run():
     menu.addAction(snapshot_sessions_action)
     menu.addSeparator()
 
+    def present_window(tab=None):
+        """Bring Chatter back to the user's current desktop and frontmost."""
+        if tab is not None:
+            window.tabs.setCurrentWidget(tab)
+
+        # ``show()`` alone can leave a minimized QMainWindow minimized on
+        # macOS. Clear that state explicitly, then ask both Qt and AppKit to
+        # make the window visible and frontmost. This is shared by every
+        # menu-bar route so Open Chatter, Settings, and Insights behave the
+        # same way.
+        state = window.windowState()
+        if state & Qt.WindowState.WindowMinimized:
+            window.setWindowState(state & ~Qt.WindowState.WindowMinimized)
+        window.showNormal()
+        window.show()
+        window.raise_()
+        window.activateWindow()
+        try:
+            AppKit.NSApp().activateIgnoringOtherApps_(True)
+        except Exception:
+            logger.exception("couldn't activate Chatter through AppKit")
+        # AppKit may process the activation after the Qt event returns. A
+        # second pass on the next event-loop turn closes that small race.
+        QTimer.singleShot(0, lambda: (window.raise_(), window.activateWindow()))
+
     open_action = QAction("Open Chatter")
-    open_action.triggered.connect(lambda: (window.show(), window.raise_(), window.activateWindow()))
+    open_action.triggered.connect(present_window)
     menu.addAction(open_action)
 
     settings_action = QAction("Settings…")
@@ -317,18 +349,12 @@ def run():
     settings_action.setMenuRole(QAction.MenuRole.PreferencesRole)
 
     def open_settings():
-        window.show()
-        window.tabs.setCurrentWidget(window.settings_tab)
-        window.raise_()
-        window.activateWindow()
+        present_window(window.settings_tab)
 
     settings_action.triggered.connect(open_settings)
 
     def open_insights():
-        window.show()
-        window.tabs.setCurrentWidget(window.insights_tab)
-        window.raise_()
-        window.activateWindow()
+        present_window(window.insights_tab)
 
     insights_action = QAction("See more insights")
     insights_action.triggered.connect(open_insights)
@@ -629,12 +655,21 @@ def run():
 
     menu.addSeparator()
     quit_action = QAction("Quit Chatter")
+    runtime_closed = {"value": False}
 
-    def do_quit():
+    def close_runtime():
+        """Release native model/server resources for every quit path."""
+        if runtime_closed["value"]:
+            return
+        runtime_closed["value"] = True
         hotkey.shutdown()
         formatter.shutdown()
         service.close()
         streaming_service.close()
+
+    app.aboutToQuit.connect(close_runtime)
+
+    def do_quit():
         app.quit()
 
     quit_action.triggered.connect(do_quit)
@@ -683,10 +718,7 @@ def run():
     open_media_action = QAction("Open audio or video…", window)
 
     def open_media():
-        window.show()
-        window.tabs.setCurrentIndex(1)
-        window.raise_()
-        window.activateWindow()
+        present_window(window.tabs.widget(1))
         window.open_file()
 
     open_media_action.triggered.connect(open_media)

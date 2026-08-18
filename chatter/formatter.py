@@ -5,6 +5,8 @@ configured or the server/model fails.
 """
 
 import logging
+import os
+import signal
 import subprocess
 import threading
 import time
@@ -256,7 +258,7 @@ class Formatter:
             return True
 
         if self._proc is not None and self._proc.poll() is None:
-            self.shutdown()
+            self._shutdown_locked()
 
         self._port = port
         args = [
@@ -328,6 +330,81 @@ class Formatter:
         with self._request_lock:
             self._ensure_server()
 
+    @staticmethod
+    def _matches_managed_server(command: str, port: int, model_path: str) -> bool:
+        """Return true only for the llama-server Chatter configured to own.
+
+        The cleanup model is an optional child process. If Chatter is killed
+        or upgraded while it is running, the child can outlive the GUI. On the
+        next launch we may reclaim that exact process, but must never kill an
+        unrelated llama.cpp server that happens to be running on the machine.
+        """
+        command = str(command or "")
+        return (
+            "llama-server" in command
+            and f"--port {int(port)}" in command
+            and str(Path(model_path).expanduser()) in command
+        )
+
+    @classmethod
+    def reap_stale_server(cls, cfg: dict | None = None) -> int:
+        """Reclaim an orphaned optional cleanup server when cleanup is off.
+
+        This is deliberately conservative: it looks only at the configured
+        localhost port, verifies the full configured model path in the target
+        command line, and leaves every other process alone. It fixes the
+        common upgrade/crash case where a previous Chatter-owned server was
+        still holding model memory even though the current setting was off.
+        """
+        cfg = cfg or config.load()
+        if cfg.get("formatting_enabled", True):
+            return 0
+        model_path = str(cfg.get("llama_model_path", "")).strip()
+        if not model_path:
+            return 0
+        try:
+            port = int(cfg.get("llama_port", 8712))
+        except (TypeError, ValueError):
+            port = 8712
+
+        try:
+            result = subprocess.run(
+                ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            logger.debug("could not inspect stale cleanup server on port %s", port, exc_info=True)
+            return 0
+
+        reclaimed = 0
+        for raw_pid in result.stdout.splitlines():
+            try:
+                pid = int(raw_pid.strip())
+            except ValueError:
+                continue
+            if pid == os.getpid():
+                continue
+            try:
+                command_result = subprocess.run(
+                    ["ps", "-p", str(pid), "-o", "command="],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                    check=False,
+                )
+                command = command_result.stdout.strip()
+                if not cls._matches_managed_server(command, port, model_path):
+                    continue
+                os.kill(pid, signal.SIGTERM)
+                reclaimed += 1
+                logger.info("reclaimed stale Chatter cleanup server pid=%s", pid)
+            except (OSError, subprocess.SubprocessError):
+                logger.debug("could not reclaim stale cleanup server pid=%s", pid, exc_info=True)
+        return reclaimed
+
     def format_transcript(
         self, raw_text: str, context: CaptureContext | None = None
     ) -> str:
@@ -388,6 +465,11 @@ class Formatter:
                 return deterministic_cleanup(raw_text) or raw_text
 
     def shutdown(self):
+        with self._request_lock:
+            self._shutdown_locked()
+
+    def _shutdown_locked(self):
+        """Stop the child while ``_request_lock`` is already held."""
         if self._proc is not None and self._proc.poll() is None:
             self._proc.terminate()
             try:
